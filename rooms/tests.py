@@ -26,7 +26,7 @@ class RoomApiTests(APITestCase):
             name="Mangal Steak House",
             is_active=True,
         )
-        self._authenticate("ali")
+        self._authenticate("Ali")
 
     def _authenticate(self, username):
         user, _ = User.objects.get_or_create(username=username)
@@ -34,11 +34,10 @@ class RoomApiTests(APITestCase):
         return user
 
     def create_room(self, *, max_players=2, password=""):
-        self._authenticate("ali")
+        self._authenticate("Ali")
         response = self.client.post(
             reverse("restaurant-rooms", args=[self.restaurant.id]),
             {
-                "owner_name": "Ali",
                 "max_players": max_players,
                 "password": password,
             },
@@ -47,10 +46,23 @@ class RoomApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         return response
 
-    def test_create_room_adds_owner_as_first_player(self):
+    def test_create_room_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.post(
+            reverse("restaurant-rooms", args=[self.restaurant.id]),
+            {"max_players": 2},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(GameRoom.objects.count(), 0)
+
+    def test_create_room_adds_authenticated_user_as_first_player(self):
         response = self.create_room(max_players=4)
 
         self.assertEqual(response.data["current_players"], 1)
+        self.assertEqual(response.data["owner_name"], "Ali")
         self.assertEqual(response.data["players"][0]["name"], "Ali")
         self.assertEqual(response.data["players"][0]["seat_index"], 0)
         self.assertTrue(response.data["players"][0]["is_owner"])
@@ -66,20 +78,21 @@ class RoomApiTests(APITestCase):
         self.assertNotIn("password", response.data)
         self.assertNotIn("password_hash", response.data)
 
-        self._authenticate("john")
+        self._authenticate("John")
         wrong = self.client.post(
             reverse("room-join", args=[room_id]),
-            {"player_name": "John", "password": "9999"},
+            {"password": "9999"},
             format="json",
         )
         self.assertEqual(wrong.status_code, status.HTTP_400_BAD_REQUEST)
 
         correct = self.client.post(
             reverse("room-join", args=[room_id]),
-            {"player_name": "John", "password": "1234"},
+            {"password": "1234"},
             format="json",
         )
         self.assertEqual(correct.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(correct.data["player"]["name"], "John")
         self.assertEqual(correct.data["player"]["seat_index"], 1)
         self.assertIsNotNone(correct.data["player"]["user_id"])
 
@@ -87,29 +100,45 @@ class RoomApiTests(APITestCase):
         response = self.create_room(max_players=2)
         room_id = response.data["id"]
 
-        self._authenticate("john")
+        self._authenticate("John")
         john = self.client.post(
             reverse("room-join", args=[room_id]),
-            {"player_name": "John"},
+            {},
             format="json",
         )
         self.assertEqual(john.status_code, status.HTTP_201_CREATED)
 
-        self._authenticate("alex")
+        self._authenticate("Alex")
         third = self.client.post(
             reverse("room-join", args=[room_id]),
-            {"player_name": "Alex"},
+            {},
             format="json",
         )
         self.assertEqual(third.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_same_authenticated_user_cannot_take_two_seats(self):
+        response = self.create_room(max_players=4)
+        room_id = response.data["id"]
+
+        duplicate = self.client.post(
+            reverse("room-join", args=[room_id]),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            RoomPlayer.objects.filter(room_id=room_id, is_active=True).count(),
+            1,
+        )
+
     def test_inactive_restaurant_cannot_create_room(self):
         inactive = Restaurant.objects.create(name="Closed", is_active=False)
-        self._authenticate("ali")
+        self._authenticate("Ali")
 
         response = self.client.post(
             reverse("restaurant-rooms", args=[inactive.id]),
-            {"owner_name": "Ali", "max_players": 2},
+            {"max_players": 2},
             format="json",
         )
 
@@ -121,10 +150,10 @@ class RoomApiTests(APITestCase):
         room_id = created.data["id"]
         owner_id = created.data["players"][0]["id"]
 
-        self._authenticate("john")
+        self._authenticate("John")
         joined = self.client.post(
             reverse("room-join", args=[room_id]),
-            {"player_name": "John"},
+            {},
             format="json",
         )
         self.assertEqual(joined.status_code, status.HTTP_201_CREATED)
@@ -150,10 +179,10 @@ class RoomApiTests(APITestCase):
         room_id = created.data["id"]
         owner_id = created.data["players"][0]["id"]
 
-        self._authenticate("john")
+        self._authenticate("John")
         joined = self.client.post(
             reverse("room-join", args=[room_id]),
-            {"player_name": "John"},
+            {},
             format="json",
         )
         john_id = joined.data["player"]["id"]
