@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
@@ -76,6 +77,7 @@ class GiftApiTests(APITestCase):
         self.assertTrue(
             all(item["restaurant_id"] == self.restaurant.id for item in response.data)
         )
+        self.assertTrue(all(item["giftable_count"] == 0 for item in response.data))
 
         tea_data = next(item for item in response.data if item["name"] == "Чай")
         hookah_data = next(item for item in response.data if item["name"] == "Кальян")
@@ -86,28 +88,76 @@ class GiftApiTests(APITestCase):
             "http://testserver/media/gifts/hookah.png",
         )
 
-    def test_inventory_returns_only_current_user_items(self):
-        mine = InventoryGift.objects.create(owner=self.user, gift=self.hookah)
-        InventoryGift.objects.create(owner=self.other_user, gift=self.tea)
+    def test_prototype_purchase_adds_giftable_stock(self):
+        response = self.client.post(
+            reverse("purchase-gift", args=[self.restaurant.id, self.hookah.id]),
+            {"quantity": 3},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["added"], 3)
+        self.assertEqual(response.data["giftable_count"], 3)
+        self.assertEqual(
+            InventoryGift.objects.filter(
+                owner=self.user,
+                gift=self.hookah,
+                is_giftable=True,
+            ).count(),
+            3,
+        )
+
+        catalog = self.client.get(
+            reverse("restaurant-gifts", args=[self.restaurant.id])
+        )
+        hookah_data = next(item for item in catalog.data if item["id"] == self.hookah.id)
+        self.assertEqual(hookah_data["giftable_count"], 3)
+
+    def test_inventory_returns_only_received_gifts(self):
+        received = InventoryGift.objects.create(
+            owner=self.user,
+            gift=self.hookah,
+            is_giftable=False,
+            gifted_by=self.other_user,
+            gifted_at=timezone.now(),
+        )
+        InventoryGift.objects.create(
+            owner=self.user,
+            gift=self.tea,
+            is_giftable=True,
+        )
+        InventoryGift.objects.create(
+            owner=self.other_user,
+            gift=self.tea,
+            is_giftable=False,
+            gifted_by=self.user,
+            gifted_at=timezone.now(),
+        )
 
         response = self.client.get(reverse("inventory-gifts"))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]["id"], mine.id)
+        self.assertEqual(response.data[0]["id"], received.id)
         self.assertEqual(response.data[0]["gift"]["name"], "Кальян")
-        self.assertTrue(response.data[0]["is_giftable"])
+        self.assertFalse(response.data[0]["is_giftable"])
+        self.assertEqual(response.data[0]["gifted_by_id"], self.other_user.id)
+        self.assertEqual(response.data[0]["gifted_by_name"], "john")
         self.assertEqual(
             response.data[0]["gift"]["image_url"],
             "http://testserver/media/gifts/hookah.png",
         )
         self.assertEqual(
             response.data[0]["qr_code"],
-            f"domino-gift://redeem/{mine.qr_token}",
+            f"domino-gift://redeem/{received.qr_token}",
         )
 
     def test_inventory_detail_cannot_read_another_users_gift(self):
-        item = InventoryGift.objects.create(owner=self.other_user, gift=self.tea)
+        item = InventoryGift.objects.create(
+            owner=self.other_user,
+            gift=self.tea,
+            is_giftable=False,
+        )
 
         response = self.client.get(
             reverse("inventory-gift-detail", args=[item.id])
@@ -225,6 +275,8 @@ class MultiplayerGiftTests(APITestCase):
             {self.john.id, self.alex.id, self.annie.id},
         )
         self.assertTrue(all(not item.is_giftable for item in transferred))
+        self.assertTrue(all(item.gifted_by_id == self.ali.id for item in transferred))
+        self.assertTrue(all(item.gifted_at is not None for item in transferred))
 
         for player in (
             self.john_player,
@@ -253,6 +305,8 @@ class MultiplayerGiftTests(APITestCase):
         self.assertEqual(new_item.owner_id, self.john.id)
         self.assertFalse(old_item.is_giftable)
         self.assertFalse(new_item.is_giftable)
+        self.assertEqual(old_item.gifted_by_id, self.ali.id)
+        self.assertEqual(new_item.gifted_by_id, self.ali.id)
 
     def test_received_gift_cannot_be_regifted(self):
         item = InventoryGift.objects.create(owner=self.ali, gift=self.hookah)
