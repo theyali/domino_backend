@@ -41,6 +41,9 @@ class GameSession(models.Model):
     scores = models.JSONField(default=dict)
     last_round_result = models.JSONField(default=dict, blank=True)
 
+    turn_started_at = models.DateTimeField(null=True, blank=True)
+    turn_deadline_at = models.DateTimeField(null=True, blank=True)
+
     started_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
