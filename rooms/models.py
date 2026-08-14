@@ -45,7 +45,7 @@ class GameRoom(models.Model):
 
     @property
     def current_players(self):
-        return self.players.count()
+        return self.players.filter(is_active=True).count()
 
     @property
     def is_full(self):
@@ -70,6 +70,7 @@ class RoomPlayer(models.Model):
     name = models.CharField(max_length=40)
     seat_index = models.PositiveSmallIntegerField()
     is_owner = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
