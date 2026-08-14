@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     InventoryGiftDetailView,
     InventoryGiftListView,
+    PurchaseGiftView,
     RestaurantGiftListView,
     SendRoomGiftView,
 )
@@ -13,6 +14,11 @@ urlpatterns = [
         "restaurants/<int:restaurant_id>/gifts/",
         RestaurantGiftListView.as_view(),
         name="restaurant-gifts",
+    ),
+    path(
+        "restaurants/<int:restaurant_id>/gifts/<int:gift_id>/purchase/",
+        PurchaseGiftView.as_view(),
+        name="purchase-gift",
     ),
     path(
         "inventory/gifts/",
