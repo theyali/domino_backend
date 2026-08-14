@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from restaurants.models import Restaurant
 
 from .models import GameRoom
+from .presence import cleanup_stale_rooms
 from .serializers import (
     GameRoomCreateSerializer,
     GameRoomSerializer,
@@ -19,6 +20,9 @@ from .services import create_room, join_room, leave_room
 class RestaurantRoomsView(APIView):
     def get(self, request, restaurant_id):
         restaurant = get_object_or_404(Restaurant, pk=restaurant_id)
+
+        cleanup_stale_rooms(restaurant_id=restaurant_id)
+
         rooms = (
             restaurant.game_rooms.filter(status=GameRoom.Status.WAITING)
             .prefetch_related("players")
