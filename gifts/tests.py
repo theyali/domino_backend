@@ -243,22 +243,20 @@ class MultiplayerGiftTests(APITestCase):
             format="json",
         )
 
-    def test_can_send_gift_to_self(self):
+    def test_cannot_send_gift_to_self(self):
         item = InventoryGift.objects.create(owner=self.ali, gift=self.hookah)
 
         response = self._send(self.hookah, [self.ali_player.id])
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["recipient_player_ids"], [self.ali_player.id])
-
+        self.assertEqual(response.status_code, 400)
         item.refresh_from_db()
         self.ali_player.refresh_from_db()
 
         self.assertEqual(item.owner_id, self.ali.id)
-        self.assertFalse(item.is_giftable)
-        self.assertEqual(item.gifted_by_id, self.ali.id)
-        self.assertIsNotNone(item.gifted_at)
-        self.assertEqual(self.ali_player.active_gift_id, self.hookah.id)
+        self.assertTrue(item.is_giftable)
+        self.assertIsNone(item.gifted_by_id)
+        self.assertIsNone(item.gifted_at)
+        self.assertIsNone(self.ali_player.active_gift_id)
 
     def test_send_same_gift_to_three_players_transfers_three_inventory_items(self):
         items = [
