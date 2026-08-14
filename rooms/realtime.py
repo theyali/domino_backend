@@ -52,3 +52,23 @@ def broadcast_game_state_updated(room_id: int) -> None:
             "room_id": room_id,
         },
     )
+
+
+def broadcast_gift_sent(
+    *,
+    room_id: int,
+    event_id: str,
+    sender_player_id: int,
+    recipient_player_ids: list[int],
+    gift: dict,
+) -> None:
+    _group_send(
+        room_id,
+        {
+            "type": "gift.sent",
+            "event_id": event_id,
+            "sender_player_id": sender_player_id,
+            "recipient_player_ids": recipient_player_ids,
+            "gift": gift,
+        },
+    )
