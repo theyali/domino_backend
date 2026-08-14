@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -16,14 +17,24 @@ from rooms.presence import (
 )
 
 
+User = get_user_model()
+
+
 class RoomApiTests(APITestCase):
     def setUp(self):
         self.restaurant = Restaurant.objects.create(
             name="Mangal Steak House",
             is_active=True,
         )
+        self._authenticate("ali")
+
+    def _authenticate(self, username):
+        user, _ = User.objects.get_or_create(username=username)
+        self.client.force_authenticate(user=user)
+        return user
 
     def create_room(self, *, max_players=2, password=""):
+        self._authenticate("ali")
         response = self.client.post(
             reverse("restaurant-rooms", args=[self.restaurant.id]),
             {
@@ -45,6 +56,7 @@ class RoomApiTests(APITestCase):
         self.assertTrue(response.data["players"][0]["is_owner"])
         self.assertTrue(response.data["players"][0]["is_active"])
         self.assertFalse(response.data["players"][0]["is_online"])
+        self.assertIsNotNone(response.data["players"][0]["user_id"])
 
     def test_password_is_not_exposed_and_wrong_password_is_rejected(self):
         response = self.create_room(password="1234")
@@ -54,6 +66,7 @@ class RoomApiTests(APITestCase):
         self.assertNotIn("password", response.data)
         self.assertNotIn("password_hash", response.data)
 
+        self._authenticate("john")
         wrong = self.client.post(
             reverse("room-join", args=[room_id]),
             {"player_name": "John", "password": "9999"},
@@ -68,11 +81,13 @@ class RoomApiTests(APITestCase):
         )
         self.assertEqual(correct.status_code, status.HTTP_201_CREATED)
         self.assertEqual(correct.data["player"]["seat_index"], 1)
+        self.assertIsNotNone(correct.data["player"]["user_id"])
 
     def test_room_rejects_player_when_full(self):
         response = self.create_room(max_players=2)
         room_id = response.data["id"]
 
+        self._authenticate("john")
         john = self.client.post(
             reverse("room-join", args=[room_id]),
             {"player_name": "John"},
@@ -80,6 +95,7 @@ class RoomApiTests(APITestCase):
         )
         self.assertEqual(john.status_code, status.HTTP_201_CREATED)
 
+        self._authenticate("alex")
         third = self.client.post(
             reverse("room-join", args=[room_id]),
             {"player_name": "Alex"},
@@ -89,6 +105,7 @@ class RoomApiTests(APITestCase):
 
     def test_inactive_restaurant_cannot_create_room(self):
         inactive = Restaurant.objects.create(name="Closed", is_active=False)
+        self._authenticate("ali")
 
         response = self.client.post(
             reverse("restaurant-rooms", args=[inactive.id]),
@@ -104,6 +121,7 @@ class RoomApiTests(APITestCase):
         room_id = created.data["id"]
         owner_id = created.data["players"][0]["id"]
 
+        self._authenticate("john")
         joined = self.client.post(
             reverse("room-join", args=[room_id]),
             {"player_name": "John"},
@@ -132,6 +150,7 @@ class RoomApiTests(APITestCase):
         room_id = created.data["id"]
         owner_id = created.data["players"][0]["id"]
 
+        self._authenticate("john")
         joined = self.client.post(
             reverse("room-join", args=[room_id]),
             {"player_name": "John"},
