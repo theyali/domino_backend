@@ -7,6 +7,7 @@ from rooms.realtime import broadcast_game_started, broadcast_game_state_updated
 from .engine import deal_round, find_domino, orient_domino_for_side, playable_sides
 from .models import GameSession
 from .state import serialize_game_state_for_player
+from .turn_clock import clear_turn_clock, reset_turn_clock
 
 LOSING_SCORE = 101
 MINIMUM_PENALTY_TO_RECORD = 13
@@ -32,6 +33,18 @@ def start_game(*, room_id, player_id):
 
     existing_session = GameSession.objects.filter(room=room).first()
     if existing_session is not None:
+        if (
+            existing_session.status == GameSession.Status.ACTIVE
+            and existing_session.turn_deadline_at is None
+        ):
+            reset_turn_clock(existing_session)
+            existing_session.save(
+                update_fields=[
+                    "turn_started_at",
+                    "turn_deadline_at",
+                    "updated_at",
+                ]
+            )
         return existing_session
 
     if room.status != GameRoom.Status.WAITING:
@@ -60,6 +73,14 @@ def start_game(*, room_id, player_id):
         scores={str(player.pk): 0 for player in players},
         consecutive_passes=0,
         last_round_result={},
+    )
+    reset_turn_clock(session)
+    session.save(
+        update_fields=[
+            "turn_started_at",
+            "turn_deadline_at",
+            "updated_at",
+        ]
     )
 
     room.status = GameRoom.Status.PLAYING
@@ -110,6 +131,7 @@ def start_next_round(*, room_id, player_id):
     session.table = []
     session.consecutive_passes = 0
     session.last_round_result = {}
+    reset_turn_clock(session)
     session.version += 1
     session.save(
         update_fields=[
@@ -123,6 +145,8 @@ def start_next_round(*, room_id, player_id):
             "table",
             "consecutive_passes",
             "last_round_result",
+            "turn_started_at",
+            "turn_deadline_at",
             "version",
             "updated_at",
         ]
@@ -192,6 +216,7 @@ def play_domino(*, room_id, player_id, domino_id, side):
 
     if hand:
         session.current_player = _next_player(players, current_player_id=player_id)
+        reset_turn_clock(session)
     else:
         _finish_round(
             session=session,
@@ -205,6 +230,8 @@ def play_domino(*, room_id, player_id, domino_id, side):
         "hands",
         "table",
         "consecutive_passes",
+        "turn_started_at",
+        "turn_deadline_at",
         "version",
         "updated_at",
     ]
@@ -245,12 +272,15 @@ def draw_domino(*, room_id, player_id):
     session.hands = hands
     session.boneyard = boneyard
     session.consecutive_passes = 0
+    reset_turn_clock(session)
     session.version += 1
     session.save(
         update_fields=[
             "hands",
             "boneyard",
             "consecutive_passes",
+            "turn_started_at",
+            "turn_deadline_at",
             "version",
             "updated_at",
         ]
@@ -296,10 +326,13 @@ def pass_turn(*, room_id, player_id):
         )
     else:
         session.current_player = _next_player(players, current_player_id=player_id)
+        reset_turn_clock(session)
 
     session.version += 1
     update_fields = [
         "consecutive_passes",
+        "turn_started_at",
+        "turn_deadline_at",
         "version",
         "updated_at",
     ]
@@ -352,11 +385,14 @@ def finish_game_on_player_exit(*, room_id, player_id):
         "match_winner_player_ids": active_winners,
         "left_player_id": player_id,
     }
+    clear_turn_clock(session)
     session.version += 1
     session.save(
         update_fields=[
             "status",
             "last_round_result",
+            "turn_started_at",
+            "turn_deadline_at",
             "version",
             "updated_at",
         ]
@@ -421,6 +457,7 @@ def _finish_round(
         "match_loser_player_ids": match_loser_ids,
         "match_winner_player_ids": match_winner_ids,
     }
+    clear_turn_clock(session)
 
     if match_loser_ids:
         session.room.status = GameRoom.Status.FINISHED
