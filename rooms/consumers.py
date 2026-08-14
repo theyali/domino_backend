@@ -7,6 +7,7 @@ from game.models import GameSession
 from game.state import serialize_game_state_for_player
 
 from .models import GameRoom, RoomPlayer
+from .presence import mark_player_offline, mark_player_online, touch_player
 from .realtime import room_group_name
 from .serializers import GameRoomSerializer
 
@@ -28,28 +29,44 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
 
         self.player_id = player_id
 
+        await self._set_online()
         await self.channel_layer.group_add(
             self.room_group_name,
             self.channel_name,
         )
         await self.accept()
+
         await self._send_room_state()
         await self._send_game_state_if_started()
+        await self._broadcast_presence_change()
 
     async def disconnect(self, close_code):
         group_name = getattr(self, "room_group_name", None)
+        player_id = getattr(self, "player_id", None)
+
+        if player_id is not None:
+            await self._set_offline()
+
         if group_name is not None:
             await self.channel_layer.group_discard(
                 group_name,
                 self.channel_name,
             )
 
+        if group_name is not None and player_id is not None:
+            await self.channel_layer.group_send(
+                group_name,
+                {"type": "room.updated"},
+            )
+
     async def receive_json(self, content, **kwargs):
         if content.get("type") == "ping":
+            await self._touch_player()
             await self.send_json({"type": "pong"})
 
     async def room_updated(self, event):
         await self._send_room_state()
+        await self._send_game_state(message_type="game_state")
 
     async def room_deleted(self, event):
         await self.send_json(
@@ -65,6 +82,12 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
 
     async def game_state_updated(self, event):
         await self._send_game_state(message_type="game_state")
+
+    async def _broadcast_presence_change(self):
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {"type": "room.updated"},
+        )
 
     async def _send_room_state(self):
         room_data = await self._serialized_room()
@@ -126,6 +149,27 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
             room_id=self.room_id,
             is_active=True,
         ).exists()
+
+    @database_sync_to_async
+    def _set_online(self):
+        return mark_player_online(
+            room_id=self.room_id,
+            player_id=self.player_id,
+        )
+
+    @database_sync_to_async
+    def _touch_player(self):
+        return touch_player(
+            room_id=self.room_id,
+            player_id=self.player_id,
+        )
+
+    @database_sync_to_async
+    def _set_offline(self):
+        return mark_player_offline(
+            room_id=self.room_id,
+            player_id=self.player_id,
+        )
 
     @database_sync_to_async
     def _serialized_room(self):
