@@ -16,6 +16,7 @@ from .services import (
     pass_turn,
     play_domino,
     start_game,
+    start_next_round,
 )
 
 
@@ -39,6 +40,26 @@ class StartGameView(APIView):
         )
 
 
+class NextRoundView(APIView):
+    def post(self, request, room_id):
+        serializer = PlayerGameActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        player_id = serializer.validated_data["player_id"]
+
+        session = start_next_round(room_id=room_id, player_id=player_id)
+        session = _game_session_queryset().get(pk=session.pk)
+
+        return Response(
+            {
+                "type": "game_state",
+                "game": game_state_for_player(
+                    session=session,
+                    player_id=player_id,
+                ),
+            }
+        )
+
+
 class GameStateView(APIView):
     def get(self, request, room_id):
         room = get_object_or_404(GameRoom, pk=room_id)
@@ -51,7 +72,11 @@ class GameStateView(APIView):
                 status=400,
             )
 
-        if not RoomPlayer.objects.filter(pk=player_id, room=room).exists():
+        if not RoomPlayer.objects.filter(
+            pk=player_id,
+            room=room,
+            is_active=True,
+        ).exists():
             return Response(
                 {"player_id": ["Игрок не найден в этой комнате."]},
                 status=403,
