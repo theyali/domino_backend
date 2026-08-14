@@ -20,6 +20,16 @@ def _next_free_seat(room):
     return None
 
 
+def _player_name_for_user(user):
+    if not getattr(user, "is_authenticated", False):
+        raise ValidationError({"user": "Для входа за стол нужна авторизация."})
+
+    full_name = (user.get_full_name() or "").strip()
+    username = (getattr(user, "username", "") or "").strip()
+    name = full_name or username or f"Игрок {user.pk}"
+    return name[:40]
+
+
 def _promote_new_owner(room):
     new_owner = (
         room.players.filter(is_active=True)
@@ -44,18 +54,19 @@ def _promote_new_owner(room):
 def create_room(
     *,
     restaurant,
-    owner_name,
+    user,
     max_players,
     password="",
     name="",
-    user=None,
 ):
     if not restaurant.is_active:
         raise ValidationError({"restaurant": "Этот ресторан сейчас неактивен."})
 
+    player_name = _player_name_for_user(user)
+
     room = GameRoom(
         restaurant=restaurant,
-        owner_name=owner_name,
+        owner_name=player_name,
         max_players=max_players,
         name=(name or "").strip(),
     )
@@ -64,8 +75,8 @@ def create_room(
 
     RoomPlayer.objects.create(
         room=room,
-        user=user if getattr(user, "is_authenticated", False) else None,
-        name=owner_name,
+        user=user,
+        name=player_name,
         seat_index=0,
         is_owner=True,
         is_active=True,
@@ -75,7 +86,7 @@ def create_room(
 
 
 @transaction.atomic
-def join_room(*, room_id, player_name, password="", user=None):
+def join_room(*, room_id, user, password=""):
     room = (
         GameRoom.objects.select_for_update()
         .select_related("restaurant")
@@ -88,11 +99,11 @@ def join_room(*, room_id, player_name, password="", user=None):
     if not room.check_room_password(password):
         raise ValidationError({"password": "Неверный пароль комнаты."})
 
-    authenticated_user = user if getattr(user, "is_authenticated", False) else None
-    if authenticated_user is not None:
-        existing = room.players.filter(user=authenticated_user, is_active=True).first()
-        if existing is not None:
-            raise ValidationError({"room": "Ты уже находишься за этим столом."})
+    player_name = _player_name_for_user(user)
+
+    existing = room.players.filter(user=user, is_active=True).first()
+    if existing is not None:
+        raise ValidationError({"room": "Ты уже находишься за этим столом."})
 
     if room.is_full:
         raise ValidationError({"room": "Комната уже заполнена."})
@@ -103,7 +114,7 @@ def join_room(*, room_id, player_name, password="", user=None):
 
     player = RoomPlayer.objects.create(
         room=room,
-        user=authenticated_user,
+        user=user,
         name=player_name,
         seat_index=seat_index,
         is_owner=False,
