@@ -1,0 +1,136 @@
+from uuid import uuid4
+
+from django.db import transaction
+from django.utils import timezone
+from rest_framework.exceptions import ValidationError
+
+from rooms.models import GameRoom, RoomPlayer
+from rooms.realtime import broadcast_gift_sent
+
+from .models import Gift, InventoryGift
+
+
+@transaction.atomic
+def send_gift_to_room_players(
+    *,
+    sender_user,
+    room_id,
+    gift_id,
+    recipient_player_ids,
+):
+    room = (
+        GameRoom.objects.select_for_update()
+        .select_related("restaurant")
+        .get(pk=room_id)
+    )
+
+    if room.status != GameRoom.Status.PLAYING:
+        raise ValidationError({"room": "Подарки можно отправлять во время активной игры."})
+
+    try:
+        sender_player = RoomPlayer.objects.select_for_update().get(
+            room=room,
+            user=sender_user,
+            is_active=True,
+        )
+    except RoomPlayer.DoesNotExist as exc:
+        raise ValidationError(
+            {"sender": "Твой аккаунт не привязан к игроку за этим столом."}
+        ) from exc
+
+    recipient_ids = list(dict.fromkeys(int(value) for value in recipient_player_ids))
+    if not recipient_ids:
+        raise ValidationError({"recipients": "Выбери хотя бы одного получателя."})
+
+    if sender_player.id in recipient_ids:
+        raise ValidationError({"recipients": "Нельзя отправить подарок самому себе."})
+
+    recipients = list(
+        RoomPlayer.objects.select_for_update()
+        .select_related("user")
+        .filter(
+            room=room,
+            id__in=recipient_ids,
+            is_active=True,
+        )
+        .order_by("seat_index")
+    )
+
+    if len(recipients) != len(recipient_ids):
+        raise ValidationError({"recipients": "Один из получателей уже не находится за столом."})
+
+    if any(player.user_id is None for player in recipients):
+        raise ValidationError(
+            {"recipients": "Один из игроков вошёл в старую комнату без аккаунта. Создай новый стол."}
+        )
+
+    try:
+        gift = Gift.objects.select_for_update().get(
+            pk=gift_id,
+            restaurant=room.restaurant,
+            is_active=True,
+        )
+    except Gift.DoesNotExist as exc:
+        raise ValidationError(
+            {"gift": "Этот подарок недоступен в текущем ресторане."}
+        ) from exc
+
+    inventory_items = list(
+        InventoryGift.objects.select_for_update()
+        .filter(
+            owner=sender_user,
+            gift=gift,
+            status=InventoryGift.Status.AVAILABLE,
+        )
+        .order_by("id")[: len(recipients)]
+    )
+
+    if len(inventory_items) < len(recipients):
+        raise ValidationError(
+            {
+                "gift": (
+                    f"В инвентаре недостаточно подарков «{gift.name}». "
+                    f"Нужно: {len(recipients)}, есть: {len(inventory_items)}."
+                )
+            }
+        )
+
+    now = timezone.now()
+    transferred_inventory_ids = []
+
+    for inventory_item, recipient in zip(inventory_items, recipients, strict=True):
+        inventory_item.owner = recipient.user
+        inventory_item.save(update_fields=["owner"])
+        transferred_inventory_ids.append(inventory_item.id)
+
+        recipient.active_gift = gift
+        recipient.save(update_fields=["active_gift"])
+
+    event_id = uuid4().hex
+    gift_payload = {
+        "id": gift.id,
+        "restaurant_id": gift.restaurant_id,
+        "name": gift.name,
+        "image_url": gift.image.url if gift.image else None,
+    }
+
+    recipient_player_ids = [player.id for player in recipients]
+
+    transaction.on_commit(
+        lambda: broadcast_gift_sent(
+            room_id=room.id,
+            event_id=event_id,
+            sender_player_id=sender_player.id,
+            recipient_player_ids=recipient_player_ids,
+            gift=gift_payload,
+        )
+    )
+
+    return {
+        "event_id": event_id,
+        "sender_player_id": sender_player.id,
+        "recipient_player_ids": recipient_player_ids,
+        "gift": gift_payload,
+        "transferred_inventory_ids": transferred_inventory_ids,
+        "sent_at": now.isoformat(),
+    }
