@@ -5,6 +5,7 @@ from .models import GameRoom, RoomPlayer
 
 class RoomPlayerSerializer(serializers.ModelSerializer):
     active_gift = serializers.SerializerMethodField()
+    avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = RoomPlayer
@@ -12,6 +13,7 @@ class RoomPlayerSerializer(serializers.ModelSerializer):
             "id",
             "user_id",
             "name",
+            "avatar_url",
             "seat_index",
             "is_owner",
             "is_active",
@@ -19,6 +21,16 @@ class RoomPlayerSerializer(serializers.ModelSerializer):
             "last_seen_at",
             "active_gift",
         )
+
+    def get_avatar_url(self, obj):
+        user = obj.user
+        if user is None:
+            return None
+
+        profile = getattr(user, "profile", None)
+        if profile is None or not profile.avatar:
+            return None
+        return profile.avatar.url
 
     def get_active_gift(self, obj):
         gift = obj.active_gift
