@@ -6,6 +6,7 @@ from .models import Gift, InventoryGift
 class GiftSerializer(serializers.ModelSerializer):
     restaurant_name = serializers.CharField(source="restaurant.name", read_only=True)
     image_url = serializers.SerializerMethodField()
+    giftable_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Gift
@@ -17,6 +18,7 @@ class GiftSerializer(serializers.ModelSerializer):
             "price",
             "image_url",
             "is_active",
+            "giftable_count",
         )
 
     def get_image_url(self, obj):
@@ -29,10 +31,14 @@ class GiftSerializer(serializers.ModelSerializer):
 
         return request.build_absolute_uri(obj.image.url)
 
+    def get_giftable_count(self, obj):
+        return int(getattr(obj, "giftable_count", 0) or 0)
+
 
 class InventoryGiftSerializer(serializers.ModelSerializer):
     gift = GiftSerializer(read_only=True)
     qr_code = serializers.CharField(read_only=True)
+    gifted_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = InventoryGift
@@ -42,9 +48,24 @@ class InventoryGiftSerializer(serializers.ModelSerializer):
             "qr_code",
             "status",
             "is_giftable",
+            "gifted_by_id",
+            "gifted_by_name",
+            "gifted_at",
             "acquired_at",
             "redeemed_at",
         )
+
+    def get_gifted_by_name(self, obj):
+        sender = obj.gifted_by
+        if sender is None:
+            return None
+
+        full_name = (sender.get_full_name() or "").strip()
+        return full_name or sender.username
+
+
+class PurchaseGiftSerializer(serializers.Serializer):
+    quantity = serializers.IntegerField(min_value=1, max_value=20, default=1)
 
 
 class SendGiftSerializer(serializers.Serializer):
