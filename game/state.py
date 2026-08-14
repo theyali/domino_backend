@@ -1,6 +1,19 @@
 from django.utils import timezone
 
 
+def _serialize_active_gift(player):
+    gift = player.active_gift
+    if gift is None:
+        return None
+
+    return {
+        "id": gift.id,
+        "restaurant_id": gift.restaurant_id,
+        "name": gift.name,
+        "image_url": gift.image.url if gift.image else None,
+    }
+
+
 def serialize_game_state_for_player(session, player_id):
     room = session.room
     players = list(room.players.all())
@@ -36,6 +49,7 @@ def serialize_game_state_for_player(session, player_id):
         "players": [
             {
                 "id": player.id,
+                "user_id": player.user_id,
                 "name": player.name,
                 "seat_index": player.seat_index,
                 "is_owner": player.is_owner,
@@ -48,6 +62,7 @@ def serialize_game_state_for_player(session, player_id):
                 ),
                 "score": int(scores.get(str(player.id), 0)),
                 "domino_count": len(hands.get(str(player.id), [])),
+                "active_gift": _serialize_active_gift(player),
             }
             for player in players
         ],
