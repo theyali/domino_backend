@@ -39,11 +39,12 @@ class InventoryGiftAdmin(admin.ModelAdmin):
         "gift",
         "owner",
         "status",
+        "is_giftable",
         "qr_token",
         "acquired_at",
         "redeemed_at",
     )
-    list_filter = ("status", "gift__restaurant")
+    list_filter = ("status", "is_giftable", "gift__restaurant")
     search_fields = (
         "gift__name",
         "gift__restaurant__name",
