@@ -1,6 +1,7 @@
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.utils import timezone
 
 from restaurants.models import Restaurant
 
@@ -71,6 +72,8 @@ class RoomPlayer(models.Model):
     seat_index = models.PositiveSmallIntegerField()
     is_owner = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    is_online = models.BooleanField(default=False)
+    last_seen_at = models.DateTimeField(default=timezone.now)
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
