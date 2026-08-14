@@ -40,6 +40,8 @@ class InventoryGiftAdmin(admin.ModelAdmin):
         "owner",
         "status",
         "is_giftable",
+        "gifted_by",
+        "gifted_at",
         "qr_token",
         "acquired_at",
         "redeemed_at",
@@ -50,7 +52,9 @@ class InventoryGiftAdmin(admin.ModelAdmin):
         "gift__restaurant__name",
         "owner__username",
         "owner__email",
+        "gifted_by__username",
+        "gifted_by__email",
         "qr_token",
     )
-    readonly_fields = ("qr_token", "acquired_at")
-    autocomplete_fields = ("owner", "gift")
+    readonly_fields = ("qr_token", "acquired_at", "gifted_at")
+    autocomplete_fields = ("owner", "gift", "gifted_by")
