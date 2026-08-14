@@ -129,12 +129,14 @@ def leave_room(*, room_id, player_id):
     player.is_owner = False
     player.is_online = False
     player.last_seen_at = timezone.now()
+    player.presence_connection_token = ""
     player.save(
         update_fields=[
             "is_active",
             "is_owner",
             "is_online",
             "last_seen_at",
+            "presence_connection_token",
         ]
     )
 
