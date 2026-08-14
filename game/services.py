@@ -65,34 +65,14 @@ def start_game(*, room_id, player_id):
 
 @transaction.atomic
 def play_domino(*, room_id, player_id, domino_id, side):
-    session = (
-        GameSession.objects.select_for_update()
-        .select_related("room", "current_player", "opening_player")
-        .prefetch_related("room__players")
-        .get(room_id=room_id)
+    session, players, player, hands, hand, table = _locked_turn_context(
+        room_id=room_id,
+        player_id=player_id,
     )
 
-    if session.status != GameSession.Status.ACTIVE:
-        raise ValidationError({"game": "Эта партия уже завершена."})
-
-    players = list(session.room.players.all())
-    player = next((item for item in players if item.pk == player_id), None)
-
-    if player is None:
-        raise ValidationError({"player_id": "Игрок не найден в этой комнате."})
-
-    if session.current_player_id != player_id:
-        raise ValidationError({"player_id": "Сейчас ход другого игрока."})
-
-    hands = {key: list(value) for key, value in (session.hands or {}).items()}
-    player_key = str(player_id)
-    hand = list(hands.get(player_key, []))
     domino = find_domino(hand, domino_id)
-
     if domino is None:
         raise ValidationError({"domino_id": "Этой костяшки нет в вашей руке."})
-
-    table = [dict(item) for item in (session.table or [])]
 
     if not table:
         if domino_id != session.opening_domino_id:
@@ -126,7 +106,7 @@ def play_domino(*, room_id, player_id, domino_id, side):
     }
 
     hand = [item for item in hand if item["id"] != domino_id]
-    hands[player_key] = hand
+    hands[str(player_id)] = hand
 
     if side == "left":
         table.insert(0, played_domino)
@@ -151,6 +131,109 @@ def play_domino(*, room_id, player_id, domino_id, side):
 
     transaction.on_commit(lambda: broadcast_game_state_updated(session.room_id))
     return session
+
+
+@transaction.atomic
+def draw_domino(*, room_id, player_id):
+    session, players, player, hands, hand, table = _locked_turn_context(
+        room_id=room_id,
+        player_id=player_id,
+    )
+
+    if _has_legal_play(session=session, hand=hand, table=table):
+        raise ValidationError(
+            {"game": "У вас уже есть подходящая костяшка. Сначала сделайте ход."}
+        )
+
+    boneyard = [dict(item) for item in (session.boneyard or [])]
+    if not boneyard:
+        raise ValidationError(
+            {"game": "Базар пуст. Если ходов нет, используйте пас."}
+        )
+
+    drawn_domino = boneyard.pop()
+    hand.append(drawn_domino)
+    hands[str(player_id)] = hand
+
+    session.hands = hands
+    session.boneyard = boneyard
+    session.version += 1
+    session.save(
+        update_fields=[
+            "hands",
+            "boneyard",
+            "version",
+            "updated_at",
+        ]
+    )
+
+    transaction.on_commit(lambda: broadcast_game_state_updated(session.room_id))
+    return session
+
+
+@transaction.atomic
+def pass_turn(*, room_id, player_id):
+    session, players, player, hands, hand, table = _locked_turn_context(
+        room_id=room_id,
+        player_id=player_id,
+    )
+
+    if _has_legal_play(session=session, hand=hand, table=table):
+        raise ValidationError(
+            {"game": "Пас запрещён: у вас есть подходящая костяшка."}
+        )
+
+    if session.boneyard:
+        raise ValidationError(
+            {"game": "Пас пока запрещён: в базаре ещё есть костяшки."}
+        )
+
+    session.current_player = _next_player(players, current_player_id=player_id)
+    session.version += 1
+    session.save(
+        update_fields=[
+            "current_player",
+            "version",
+            "updated_at",
+        ]
+    )
+
+    transaction.on_commit(lambda: broadcast_game_state_updated(session.room_id))
+    return session
+
+
+def _locked_turn_context(*, room_id, player_id):
+    session = (
+        GameSession.objects.select_for_update()
+        .select_related("room", "current_player", "opening_player")
+        .prefetch_related("room__players")
+        .get(room_id=room_id)
+    )
+
+    if session.status != GameSession.Status.ACTIVE:
+        raise ValidationError({"game": "Эта партия уже завершена."})
+
+    players = list(session.room.players.all())
+    player = next((item for item in players if item.pk == player_id), None)
+
+    if player is None:
+        raise ValidationError({"player_id": "Игрок не найден в этой комнате."})
+
+    if session.current_player_id != player_id:
+        raise ValidationError({"player_id": "Сейчас ход другого игрока."})
+
+    hands = {key: list(value) for key, value in (session.hands or {}).items()}
+    hand = list(hands.get(str(player_id), []))
+    table = [dict(item) for item in (session.table or [])]
+
+    return session, players, player, hands, hand, table
+
+
+def _has_legal_play(*, session, hand, table):
+    if not table:
+        return any(item["id"] == session.opening_domino_id for item in hand)
+
+    return any(playable_sides(item, table) for item in hand)
 
 
 def _next_player(players, *, current_player_id):
