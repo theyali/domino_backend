@@ -18,12 +18,14 @@ def serialize_game_state_for_player(session, player_id):
         "table": session.table or [],
         "my_player_id": player_id,
         "my_hand": my_hand,
+        "round_result": session.last_round_result or None,
         "players": [
             {
                 "id": player.id,
                 "name": player.name,
                 "seat_index": player.seat_index,
                 "is_owner": player.is_owner,
+                "is_active": player.is_active,
                 "score": int(scores.get(str(player.id), 0)),
                 "domino_count": len(hands.get(str(player.id), [])),
             }
