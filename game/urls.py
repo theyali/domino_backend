@@ -1,5 +1,6 @@
 from django.urls import path
 
+from .surrender_views import SurrenderGameView
 from .views import (
     DrawDominoView,
     GameStateView,
@@ -31,5 +32,10 @@ urlpatterns = [
         "rooms/<int:room_id>/game/pass/",
         PassTurnView.as_view(),
         name="game-pass-turn",
+    ),
+    path(
+        "rooms/<int:room_id>/game/surrender/",
+        SurrenderGameView.as_view(),
+        name="game-surrender",
     ),
 ]
