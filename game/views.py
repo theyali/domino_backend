@@ -5,8 +5,18 @@ from rest_framework.views import APIView
 from rooms.models import GameRoom, RoomPlayer
 
 from .models import GameSession
-from .serializers import PlayDominoSerializer, StartGameSerializer
-from .services import game_state_for_player, play_domino, start_game
+from .serializers import (
+    PlayDominoSerializer,
+    PlayerGameActionSerializer,
+    StartGameSerializer,
+)
+from .services import (
+    draw_domino,
+    game_state_for_player,
+    pass_turn,
+    play_domino,
+    start_game,
+)
 
 
 class StartGameView(APIView):
@@ -72,6 +82,46 @@ class PlayDominoView(APIView):
             domino_id=serializer.validated_data["domino_id"],
             side=serializer.validated_data["side"],
         )
+        session = _game_session_queryset().get(pk=session.pk)
+
+        return Response(
+            {
+                "type": "game_state",
+                "game": game_state_for_player(
+                    session=session,
+                    player_id=player_id,
+                ),
+            }
+        )
+
+
+class DrawDominoView(APIView):
+    def post(self, request, room_id):
+        serializer = PlayerGameActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        player_id = serializer.validated_data["player_id"]
+
+        session = draw_domino(room_id=room_id, player_id=player_id)
+        session = _game_session_queryset().get(pk=session.pk)
+
+        return Response(
+            {
+                "type": "game_state",
+                "game": game_state_for_player(
+                    session=session,
+                    player_id=player_id,
+                ),
+            }
+        )
+
+
+class PassTurnView(APIView):
+    def post(self, request, room_id):
+        serializer = PlayerGameActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        player_id = serializer.validated_data["player_id"]
+
+        session = pass_turn(room_id=room_id, player_id=player_id)
         session = _game_session_queryset().get(pk=session.pk)
 
         return Response(
