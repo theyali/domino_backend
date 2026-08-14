@@ -59,7 +59,6 @@ class GameRoomSerializer(serializers.ModelSerializer):
 
 
 class GameRoomCreateSerializer(serializers.Serializer):
-    owner_name = serializers.CharField(max_length=40)
     max_players = serializers.IntegerField(min_value=2, max_value=4)
     password = serializers.CharField(
         max_length=64,
@@ -73,27 +72,14 @@ class GameRoomCreateSerializer(serializers.Serializer):
         allow_blank=True,
     )
 
-    def validate_owner_name(self, value):
-        value = value.strip()
-        if not value:
-            raise serializers.ValidationError("Введите имя игрока.")
-        return value
-
 
 class JoinRoomSerializer(serializers.Serializer):
-    player_name = serializers.CharField(max_length=40)
     password = serializers.CharField(
         max_length=64,
         required=False,
         allow_blank=True,
         write_only=True,
     )
-
-    def validate_player_name(self, value):
-        value = value.strip()
-        if not value:
-            raise serializers.ValidationError("Введите имя игрока.")
-        return value
 
 
 class LeaveRoomSerializer(serializers.Serializer):
