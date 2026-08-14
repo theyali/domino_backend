@@ -56,6 +56,7 @@ class InventoryGift(models.Model):
         choices=Status.choices,
         default=Status.AVAILABLE,
     )
+    is_giftable = models.BooleanField(default=True)
     acquired_at = models.DateTimeField(auto_now_add=True)
     redeemed_at = models.DateTimeField(null=True, blank=True)
 
