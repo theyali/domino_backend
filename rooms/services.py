@@ -1,8 +1,13 @@
 from django.db import transaction
+from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from .models import GameRoom, RoomPlayer
-from .realtime import broadcast_game_state_updated, broadcast_room_deleted, broadcast_room_updated
+from .realtime import (
+    broadcast_game_state_updated,
+    broadcast_room_deleted,
+    broadcast_room_updated,
+)
 
 
 def _next_free_seat(room):
@@ -55,6 +60,7 @@ def create_room(*, restaurant, owner_name, max_players, password="", name=""):
         seat_index=0,
         is_owner=True,
         is_active=True,
+        is_online=False,
     )
     return room
 
@@ -86,6 +92,7 @@ def join_room(*, room_id, player_name, password=""):
         seat_index=seat_index,
         is_owner=False,
         is_active=True,
+        is_online=False,
     )
 
     transaction.on_commit(lambda: broadcast_room_updated(room.pk))
@@ -120,7 +127,16 @@ def leave_room(*, room_id, player_id):
 
     player.is_active = False
     player.is_owner = False
-    player.save(update_fields=["is_active", "is_owner"])
+    player.is_online = False
+    player.last_seen_at = timezone.now()
+    player.save(
+        update_fields=[
+            "is_active",
+            "is_owner",
+            "is_online",
+            "last_seen_at",
+        ]
+    )
 
     active_players_exist = room.players.filter(is_active=True).exists()
 
