@@ -42,6 +42,9 @@ def send_gift_to_room_players(
     if not recipient_ids:
         raise ValidationError({"recipients": "Выбери хотя бы одного получателя."})
 
+    if sender_player.id in recipient_ids:
+        raise ValidationError({"recipients": "Нельзя отправить подарок самому себе."})
+
     recipients = list(
         RoomPlayer.objects.select_for_update()
         .select_related("user")
