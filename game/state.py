@@ -14,6 +14,16 @@ def serialize_game_state_for_player(session, player_id):
         "current_player_id": session.current_player_id,
         "opening_player_id": session.opening_player_id,
         "opening_domino_id": session.opening_domino_id,
+        "turn_started_at": (
+            session.turn_started_at.isoformat()
+            if session.turn_started_at is not None
+            else None
+        ),
+        "turn_deadline_at": (
+            session.turn_deadline_at.isoformat()
+            if session.turn_deadline_at is not None
+            else None
+        ),
         "boneyard_count": len(session.boneyard or []),
         "table": session.table or [],
         "my_player_id": player_id,
