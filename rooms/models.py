@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth.hashers import check_password, make_password
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
@@ -68,6 +69,13 @@ class RoomPlayer(models.Model):
         on_delete=models.CASCADE,
         related_name="players",
     )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="room_players",
+        null=True,
+        blank=True,
+    )
     name = models.CharField(max_length=40)
     seat_index = models.PositiveSmallIntegerField()
     is_owner = models.BooleanField(default=False)
@@ -78,6 +86,13 @@ class RoomPlayer(models.Model):
         max_length=64,
         blank=True,
         default="",
+    )
+    active_gift = models.ForeignKey(
+        "gifts.Gift",
+        on_delete=models.SET_NULL,
+        related_name="active_room_players",
+        null=True,
+        blank=True,
     )
     joined_at = models.DateTimeField(auto_now_add=True)
 
