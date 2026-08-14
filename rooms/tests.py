@@ -1,10 +1,19 @@
+from datetime import timedelta
+
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from game.models import GameSession
 from restaurants.models import Restaurant
 from rooms.models import GameRoom, RoomPlayer
+from rooms.presence import (
+    cleanup_stale_rooms,
+    mark_player_offline,
+    mark_player_online,
+    touch_player,
+)
 
 
 class RoomApiTests(APITestCase):
@@ -35,6 +44,7 @@ class RoomApiTests(APITestCase):
         self.assertEqual(response.data["players"][0]["seat_index"], 0)
         self.assertTrue(response.data["players"][0]["is_owner"])
         self.assertTrue(response.data["players"][0]["is_active"])
+        self.assertFalse(response.data["players"][0]["is_online"])
 
     def test_password_is_not_exposed_and_wrong_password_is_rejected(self):
         response = self.create_room(password="1234")
@@ -195,6 +205,7 @@ class RoomApiTests(APITestCase):
         john.refresh_from_db()
 
         self.assertFalse(ali.is_active)
+        self.assertFalse(ali.is_online)
         self.assertTrue(john.is_active)
         self.assertTrue(john.is_owner)
         self.assertEqual(room.current_players, 1)
@@ -213,3 +224,60 @@ class RoomApiTests(APITestCase):
         self.assertTrue(last_left.data["room_deleted"])
         self.assertFalse(GameRoom.objects.filter(pk=room.id).exists())
         self.assertFalse(GameSession.objects.filter(pk=session.id).exists())
+
+
+class RoomPresenceTests(APITestCase):
+    def setUp(self):
+        self.restaurant = Restaurant.objects.create(
+            name="Presence Test",
+            is_active=True,
+        )
+        self.room = GameRoom.objects.create(
+            restaurant=self.restaurant,
+            owner_name="Ali",
+            max_players=2,
+        )
+        self.player = RoomPlayer.objects.create(
+            room=self.room,
+            name="Ali",
+            seat_index=0,
+            is_owner=True,
+        )
+
+    def test_presence_can_go_online_touch_and_offline_without_leaving(self):
+        mark_player_online(room_id=self.room.id, player_id=self.player.id)
+        self.player.refresh_from_db()
+        first_seen = self.player.last_seen_at
+
+        self.assertTrue(self.player.is_online)
+        self.assertTrue(self.player.is_active)
+
+        touch_player(room_id=self.room.id, player_id=self.player.id)
+        self.player.refresh_from_db()
+        self.assertGreaterEqual(self.player.last_seen_at, first_seen)
+        self.assertTrue(self.player.is_online)
+
+        mark_player_offline(room_id=self.room.id, player_id=self.player.id)
+        self.player.refresh_from_db()
+        self.assertFalse(self.player.is_online)
+        self.assertTrue(self.player.is_active)
+
+    def test_cleanup_keeps_recent_offline_room_for_reconnect(self):
+        self.player.is_online = False
+        self.player.last_seen_at = timezone.now() - timedelta(minutes=5)
+        self.player.save(update_fields=["is_online", "last_seen_at"])
+
+        deleted = cleanup_stale_rooms(minutes=30)
+
+        self.assertNotIn(self.room.id, deleted)
+        self.assertTrue(GameRoom.objects.filter(pk=self.room.id).exists())
+
+    def test_cleanup_deletes_room_after_reconnect_timeout(self):
+        self.player.is_online = False
+        self.player.last_seen_at = timezone.now() - timedelta(minutes=31)
+        self.player.save(update_fields=["is_online", "last_seen_at"])
+
+        deleted = cleanup_stale_rooms(minutes=30)
+
+        self.assertIn(self.room.id, deleted)
+        self.assertFalse(GameRoom.objects.filter(pk=self.room.id).exists())
