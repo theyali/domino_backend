@@ -13,7 +13,7 @@ from .engine import (
     playable_sides,
 )
 from .models import GameSession
-from .services import play_domino, start_game
+from .services import draw_domino, pass_turn, play_domino, start_game
 
 
 class GameEngineTests(TestCase):
@@ -94,7 +94,7 @@ class StartGameTests(TestCase):
         self.assertEqual(len(session.hands[str(owner.id)]), 7)
 
 
-class PlayDominoTests(TestCase):
+class GameActionTests(TestCase):
     def setUp(self):
         restaurant = Restaurant.objects.create(name="Test")
         self.room = GameRoom.objects.create(
@@ -207,3 +207,87 @@ class PlayDominoTests(TestCase):
         self.assertEqual(session.table[-1]["left"], 6)
         self.assertEqual(session.table[-1]["right"], 5)
         self.assertEqual(session.hands[str(self.john.id)][0]["id"], 21)
+
+    def test_draw_adds_one_domino_and_keeps_current_player(self):
+        session = self._create_session()
+        session.table = [
+            {
+                "id": 10,
+                "left": 6,
+                "right": 6,
+                "played_by_player_id": self.john.id,
+                "side": "center",
+                "move_number": 1,
+            }
+        ]
+        session.hands[str(self.ali.id)] = [{"id": 11, "left": 2, "right": 5}]
+        session.boneyard = [{"id": 30, "left": 1, "right": 4}]
+        session.save(update_fields=["table", "hands", "boneyard", "updated_at"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            session = draw_domino(room_id=self.room.id, player_id=self.ali.id)
+
+        self.assertEqual(session.current_player_id, self.ali.id)
+        self.assertEqual(session.version, 2)
+        self.assertEqual(len(session.boneyard), 0)
+        self.assertEqual(len(session.hands[str(self.ali.id)]), 2)
+        self.assertEqual(session.hands[str(self.ali.id)][-1]["id"], 30)
+
+    def test_draw_is_rejected_when_player_already_has_move(self):
+        session = self._create_session()
+        session.table = [
+            {
+                "id": 99,
+                "left": 5,
+                "right": 5,
+                "played_by_player_id": self.john.id,
+                "side": "center",
+                "move_number": 1,
+            }
+        ]
+        session.boneyard = [{"id": 30, "left": 1, "right": 4}]
+        session.save(update_fields=["table", "boneyard", "updated_at"])
+
+        with self.assertRaises(ValidationError):
+            draw_domino(room_id=self.room.id, player_id=self.ali.id)
+
+    def test_pass_changes_turn_when_boneyard_is_empty_and_no_move_exists(self):
+        session = self._create_session()
+        session.table = [
+            {
+                "id": 99,
+                "left": 6,
+                "right": 6,
+                "played_by_player_id": self.john.id,
+                "side": "center",
+                "move_number": 1,
+            }
+        ]
+        session.hands[str(self.ali.id)] = [{"id": 11, "left": 2, "right": 5}]
+        session.boneyard = []
+        session.save(update_fields=["table", "hands", "boneyard", "updated_at"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            session = pass_turn(room_id=self.room.id, player_id=self.ali.id)
+
+        self.assertEqual(session.current_player_id, self.john.id)
+        self.assertEqual(session.version, 2)
+
+    def test_pass_is_rejected_while_boneyard_has_dominoes(self):
+        session = self._create_session()
+        session.table = [
+            {
+                "id": 99,
+                "left": 6,
+                "right": 6,
+                "played_by_player_id": self.john.id,
+                "side": "center",
+                "move_number": 1,
+            }
+        ]
+        session.hands[str(self.ali.id)] = [{"id": 11, "left": 2, "right": 5}]
+        session.boneyard = [{"id": 30, "left": 1, "right": 4}]
+        session.save(update_fields=["table", "hands", "boneyard", "updated_at"])
+
+        with self.assertRaises(ValidationError):
+            pass_turn(room_id=self.room.id, player_id=self.ali.id)
