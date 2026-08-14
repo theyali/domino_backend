@@ -1,3 +1,4 @@
+from uuid import uuid4
 from urllib.parse import parse_qs
 
 from channels.db import database_sync_to_async
@@ -8,7 +9,12 @@ from game.state import serialize_game_state_for_player
 from game.turn_timeout import process_expired_turn
 
 from .models import GameRoom, RoomPlayer
-from .presence import mark_player_offline, mark_player_online, touch_player
+from .presence import (
+    mark_player_offline,
+    mark_player_online,
+    mark_stale_players_offline,
+    touch_player,
+)
 from .realtime import room_group_name
 from .serializers import GameRoomSerializer
 
@@ -29,6 +35,7 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
             return
 
         self.player_id = player_id
+        self.presence_connection_token = uuid4().hex
 
         await self._set_online()
         await self.channel_layer.group_add(
@@ -44,9 +51,10 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
     async def disconnect(self, close_code):
         group_name = getattr(self, "room_group_name", None)
         player_id = getattr(self, "player_id", None)
+        presence_changed = False
 
         if player_id is not None:
-            await self._set_offline()
+            presence_changed = bool(await self._set_offline())
 
         if group_name is not None:
             await self.channel_layer.group_discard(
@@ -54,7 +62,7 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
                 self.channel_name,
             )
 
-        if group_name is not None and player_id is not None:
+        if group_name is not None and player_id is not None and presence_changed:
             await self.channel_layer.group_send(
                 group_name,
                 {"type": "room.updated"},
@@ -63,8 +71,12 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
     async def receive_json(self, content, **kwargs):
         if content.get("type") == "ping":
             await self._touch_player()
+            stale_players_marked = await self._mark_stale_players_offline()
             await self._process_turn_timeout()
             await self.send_json({"type": "pong"})
+
+            if stale_players_marked:
+                await self._broadcast_presence_change()
 
     async def room_updated(self, event):
         await self._send_room_state()
@@ -157,6 +169,7 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
         return mark_player_online(
             room_id=self.room_id,
             player_id=self.player_id,
+            connection_token=self.presence_connection_token,
         )
 
     @database_sync_to_async
@@ -164,7 +177,12 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
         return touch_player(
             room_id=self.room_id,
             player_id=self.player_id,
+            connection_token=self.presence_connection_token,
         )
+
+    @database_sync_to_async
+    def _mark_stale_players_offline(self):
+        return mark_stale_players_offline(room_id=self.room_id)
 
     @database_sync_to_async
     def _process_turn_timeout(self):
@@ -175,6 +193,7 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
         return mark_player_offline(
             room_id=self.room_id,
             player_id=self.player_id,
+            connection_token=self.presence_connection_token,
         )
 
     @database_sync_to_async
