@@ -44,3 +44,19 @@ class InventoryGiftSerializer(serializers.ModelSerializer):
             "acquired_at",
             "redeemed_at",
         )
+
+
+class SendGiftSerializer(serializers.Serializer):
+    gift_id = serializers.IntegerField(min_value=1)
+    recipient_player_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        min_length=1,
+        max_length=3,
+        allow_empty=False,
+    )
+
+    def validate_recipient_player_ids(self, value):
+        unique_ids = list(dict.fromkeys(value))
+        if len(unique_ids) != len(value):
+            raise serializers.ValidationError("Получатели не должны повторяться.")
+        return unique_ids
