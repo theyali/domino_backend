@@ -6,7 +6,8 @@ from rooms.models import GameRoom, RoomPlayer
 class GameSession(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "active", "Идёт игра"
-        FINISHED = "finished", "Завершена"
+        ROUND_FINISHED = "round_finished", "Раунд завершён"
+        FINISHED = "finished", "Матч завершён"
 
     room = models.OneToOneField(
         GameRoom,
@@ -20,6 +21,7 @@ class GameSession(models.Model):
     )
     round_number = models.PositiveSmallIntegerField(default=1)
     version = models.PositiveIntegerField(default=1)
+    consecutive_passes = models.PositiveSmallIntegerField(default=0)
 
     current_player = models.ForeignKey(
         RoomPlayer,
@@ -37,6 +39,7 @@ class GameSession(models.Model):
     boneyard = models.JSONField(default=list)
     table = models.JSONField(default=list)
     scores = models.JSONField(default=dict)
+    last_round_result = models.JSONField(default=dict, blank=True)
 
     started_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
