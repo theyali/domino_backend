@@ -1,5 +1,9 @@
+from io import BytesIO
+
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
+from PIL import Image
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -22,6 +26,7 @@ class AccountsApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(response.data["token"])
         self.assertEqual(response.data["user"]["username"], "ali")
+        self.assertIsNone(response.data["user"]["avatar_url"])
         self.assertEqual(User.objects.count(), 1)
 
     def test_register_rejects_duplicate_email(self):
@@ -64,6 +69,46 @@ class AccountsApiTests(APITestCase):
 
         self.assertEqual(me.status_code, status.HTTP_200_OK)
         self.assertEqual(me.data["username"], "john")
+
+    def test_me_patch_updates_profile_and_avatar(self):
+        User.objects.create_user(
+            username="ali",
+            email="old@example.com",
+            password="password123",
+            first_name="Ali",
+        )
+        login = self.client.post(
+            reverse("auth-login"),
+            {"username": "ali", "password": "password123"},
+            format="json",
+        )
+        token = login.data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token}")
+
+        image_buffer = BytesIO()
+        Image.new("RGB", (4, 4), "white").save(image_buffer, format="PNG")
+        avatar = SimpleUploadedFile(
+            "avatar.png",
+            image_buffer.getvalue(),
+            content_type="image/png",
+        )
+
+        response = self.client.patch(
+            reverse("auth-me"),
+            {
+                "username": "ali_new",
+                "email": "new@example.com",
+                "first_name": "Ali Updated",
+                "avatar": avatar,
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["username"], "ali_new")
+        self.assertEqual(response.data["email"], "new@example.com")
+        self.assertEqual(response.data["first_name"], "Ali Updated")
+        self.assertTrue(response.data["avatar_url"].startswith("/media/avatars/"))
 
     def test_logout_invalidates_token(self):
         user = User.objects.create_user(
