@@ -6,7 +6,15 @@ from .models import GameRoom, RoomPlayer
 class RoomPlayerSerializer(serializers.ModelSerializer):
     class Meta:
         model = RoomPlayer
-        fields = ("id", "name", "seat_index", "is_owner", "is_active")
+        fields = (
+            "id",
+            "name",
+            "seat_index",
+            "is_owner",
+            "is_active",
+            "is_online",
+            "last_seen_at",
+        )
 
 
 class GameRoomSerializer(serializers.ModelSerializer):
