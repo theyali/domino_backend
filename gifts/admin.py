@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.utils.html import format_html
 
 from .models import Gift, InventoryGift
 
@@ -10,12 +11,25 @@ class GiftAdmin(admin.ModelAdmin):
         "name",
         "restaurant",
         "price",
+        "image_preview",
         "is_active",
         "updated_at",
     )
     list_filter = ("restaurant", "is_active")
     search_fields = ("name", "restaurant__name")
     ordering = ("restaurant", "price", "id")
+    readonly_fields = ("image_preview",)
+
+    @admin.display(description="Изображение")
+    def image_preview(self, obj):
+        if not obj or not obj.image:
+            return "—"
+
+        return format_html(
+            '<img src="{}" style="width: 72px; height: 72px; '
+            'object-fit: contain; border-radius: 12px;" />',
+            obj.image.url,
+        )
 
 
 @admin.register(InventoryGift)
