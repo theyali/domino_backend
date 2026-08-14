@@ -125,6 +125,17 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
             }
         )
 
+    async def gift_sent(self, event):
+        await self.send_json(
+            {
+                "type": "gift_sent",
+                "event_id": event["event_id"],
+                "sender_player_id": event["sender_player_id"],
+                "recipient_player_ids": event["recipient_player_ids"],
+                "gift": event["gift"],
+            }
+        )
+
     async def _broadcast_presence_change(self):
         await self.channel_layer.group_send(
             self.room_group_name,
