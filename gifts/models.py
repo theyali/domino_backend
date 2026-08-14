@@ -56,7 +56,17 @@ class InventoryGift(models.Model):
         choices=Status.choices,
         default=Status.AVAILABLE,
     )
+    # True = куплен/выдан самому пользователю для последующего дарения.
+    # False = уже получен от другого пользователя и передаривать его нельзя.
     is_giftable = models.BooleanField(default=True)
+    gifted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="sent_inventory_gifts",
+        null=True,
+        blank=True,
+    )
+    gifted_at = models.DateTimeField(null=True, blank=True)
     acquired_at = models.DateTimeField(auto_now_add=True)
     redeemed_at = models.DateTimeField(null=True, blank=True)
 
