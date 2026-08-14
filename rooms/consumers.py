@@ -69,7 +69,9 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
             )
 
     async def receive_json(self, content, **kwargs):
-        if content.get("type") == "ping":
+        message_type = content.get("type")
+
+        if message_type == "ping":
             await self._touch_player()
             stale_players_marked = await self._mark_stale_players_offline()
             await self._process_turn_timeout()
@@ -77,6 +79,22 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
 
             if stale_players_marked:
                 await self._broadcast_presence_change()
+            return
+
+        if message_type == "emotion":
+            emotion = self._validated_emotion_asset(content.get("emotion"))
+            if emotion is None:
+                return
+
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    "type": "player.emotion",
+                    "player_id": self.player_id,
+                    "emotion": emotion,
+                    "event_id": uuid4().hex,
+                },
+            )
 
     async def room_updated(self, event):
         await self._send_room_state()
@@ -96,6 +114,16 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
 
     async def game_state_updated(self, event):
         await self._send_game_state(message_type="game_state")
+
+    async def player_emotion(self, event):
+        await self.send_json(
+            {
+                "type": "player_emotion",
+                "player_id": event["player_id"],
+                "emotion": event["emotion"],
+                "event_id": event["event_id"],
+            }
+        )
 
     async def _broadcast_presence_change(self):
         await self.channel_layer.group_send(
@@ -155,6 +183,23 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
             return int(raw_player_id)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _validated_emotion_asset(value):
+        if not isinstance(value, str):
+            return None
+
+        value = value.strip()
+        lowered = value.lower()
+
+        if not value.startswith("assets/emotions/"):
+            return None
+        if len(value) > 240 or ".." in value:
+            return None
+        if not lowered.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+            return None
+
+        return value
 
     @database_sync_to_async
     def _player_belongs_to_room(self, player_id):
