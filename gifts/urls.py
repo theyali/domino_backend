@@ -4,6 +4,7 @@ from .views import (
     InventoryGiftDetailView,
     InventoryGiftListView,
     RestaurantGiftListView,
+    SendRoomGiftView,
 )
 
 
@@ -22,5 +23,10 @@ urlpatterns = [
         "inventory/gifts/<int:pk>/",
         InventoryGiftDetailView.as_view(),
         name="inventory-gift-detail",
+    ),
+    path(
+        "rooms/<int:room_id>/gifts/send/",
+        SendRoomGiftView.as_view(),
+        name="send-room-gift",
     ),
 ]
