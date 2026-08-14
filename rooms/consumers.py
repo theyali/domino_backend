@@ -5,6 +5,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
 from game.models import GameSession
 from game.state import serialize_game_state_for_player
+from game.turn_timeout import process_expired_turn
 
 from .models import GameRoom, RoomPlayer
 from .presence import mark_player_offline, mark_player_online, touch_player
@@ -62,6 +63,7 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
     async def receive_json(self, content, **kwargs):
         if content.get("type") == "ping":
             await self._touch_player()
+            await self._process_turn_timeout()
             await self.send_json({"type": "pong"})
 
     async def room_updated(self, event):
@@ -165,6 +167,10 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
         )
 
     @database_sync_to_async
+    def _process_turn_timeout(self):
+        return process_expired_turn(room_id=self.room_id)
+
+    @database_sync_to_async
     def _set_offline(self):
         return mark_player_offline(
             room_id=self.room_id,
@@ -182,6 +188,8 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def _serialized_game(self):
+        process_expired_turn(room_id=self.room_id)
+
         try:
             session = (
                 GameSession.objects.select_related(
