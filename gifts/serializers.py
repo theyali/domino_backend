@@ -5,6 +5,7 @@ from .models import Gift, InventoryGift
 
 class GiftSerializer(serializers.ModelSerializer):
     restaurant_name = serializers.CharField(source="restaurant.name", read_only=True)
+    image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Gift
@@ -14,9 +15,19 @@ class GiftSerializer(serializers.ModelSerializer):
             "restaurant_name",
             "name",
             "price",
-            "icon_url",
+            "image_url",
             "is_active",
         )
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+
+        request = self.context.get("request")
+        if request is None:
+            return obj.image.url
+
+        return request.build_absolute_uri(obj.image.url)
 
 
 class InventoryGiftSerializer(serializers.ModelSerializer):
