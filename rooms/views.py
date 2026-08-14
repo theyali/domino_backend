@@ -1,5 +1,6 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import status
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -18,6 +19,11 @@ from .services import create_room, join_room, leave_room
 
 
 class RestaurantRoomsView(APIView):
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsAuthenticated()]
+        return [AllowAny()]
+
     def get(self, request, restaurant_id):
         restaurant = get_object_or_404(Restaurant, pk=restaurant_id)
 
@@ -41,6 +47,7 @@ class RestaurantRoomsView(APIView):
             max_players=serializer.validated_data["max_players"],
             password=serializer.validated_data.get("password", ""),
             name=serializer.validated_data.get("name", ""),
+            user=request.user,
         )
         room = GameRoom.objects.prefetch_related("players").get(pk=room.pk)
         return Response(
@@ -59,6 +66,8 @@ class RoomDetailView(APIView):
 
 
 class JoinRoomView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def post(self, request, room_id):
         serializer = JoinRoomSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -67,6 +76,7 @@ class JoinRoomView(APIView):
             room_id=room_id,
             player_name=serializer.validated_data["player_name"],
             password=serializer.validated_data.get("password", ""),
+            user=request.user,
         )
         room = GameRoom.objects.prefetch_related("players").get(pk=room.pk)
 
