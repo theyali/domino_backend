@@ -6,38 +6,69 @@ from .models import GameRoom, RoomPlayer
 from .realtime import broadcast_room_deleted
 
 DEFAULT_STALE_ROOM_MINUTES = 30
+DEFAULT_PRESENCE_STALE_SECONDS = 35
 
 
-def mark_player_online(*, room_id, player_id):
+def mark_player_online(*, room_id, player_id, connection_token=None):
+    updates = {
+        "is_online": True,
+        "last_seen_at": timezone.now(),
+    }
+    if connection_token is not None:
+        updates["presence_connection_token"] = connection_token
+
     return RoomPlayer.objects.filter(
         pk=player_id,
         room_id=room_id,
         is_active=True,
-    ).update(
+    ).update(**updates)
+
+
+def touch_player(*, room_id, player_id, connection_token=None):
+    queryset = RoomPlayer.objects.filter(
+        pk=player_id,
+        room_id=room_id,
+        is_active=True,
+    )
+    if connection_token is not None:
+        queryset = queryset.filter(presence_connection_token=connection_token)
+
+    return queryset.update(
         is_online=True,
         last_seen_at=timezone.now(),
     )
 
 
-def touch_player(*, room_id, player_id):
-    return RoomPlayer.objects.filter(
+def mark_player_offline(*, room_id, player_id, connection_token=None):
+    queryset = RoomPlayer.objects.filter(
         pk=player_id,
         room_id=room_id,
         is_active=True,
-    ).update(
-        is_online=True,
-        last_seen_at=timezone.now(),
     )
+    if connection_token is not None:
+        queryset = queryset.filter(presence_connection_token=connection_token)
 
-
-def mark_player_offline(*, room_id, player_id):
-    return RoomPlayer.objects.filter(
-        pk=player_id,
-        room_id=room_id,
-        is_active=True,
-    ).update(
+    return queryset.update(
         is_online=False,
         last_seen_at=timezone.now(),
+        presence_connection_token="",
+    )
+
+
+def mark_stale_players_offline(
+    *,
+    room_id,
+    seconds=DEFAULT_PRESENCE_STALE_SECONDS,
+):
+    cutoff = timezone.now() - timedelta(seconds=seconds)
+    return RoomPlayer.objects.filter(
+        room_id=room_id,
+        is_active=True,
+        is_online=True,
+        last_seen_at__lt=cutoff,
+    ).update(
+        is_online=False,
+        presence_connection_token="",
     )
 
 
