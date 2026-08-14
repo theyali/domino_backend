@@ -74,6 +74,11 @@ class RoomPlayer(models.Model):
     is_active = models.BooleanField(default=True)
     is_online = models.BooleanField(default=False)
     last_seen_at = models.DateTimeField(default=timezone.now)
+    presence_connection_token = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+    )
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
