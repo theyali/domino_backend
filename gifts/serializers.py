@@ -38,6 +38,7 @@ class GiftSerializer(serializers.ModelSerializer):
 class InventoryGiftSerializer(serializers.ModelSerializer):
     gift = GiftSerializer(read_only=True)
     qr_code = serializers.CharField(read_only=True)
+    gifted_by_id = serializers.IntegerField(read_only=True)
     gifted_by_name = serializers.SerializerMethodField()
 
     class Meta:
