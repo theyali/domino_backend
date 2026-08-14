@@ -18,6 +18,7 @@ from .services import (
     start_game,
     start_next_round,
 )
+from .turn_timeout import process_expired_turn
 
 
 class StartGameView(APIView):
@@ -82,6 +83,7 @@ class GameStateView(APIView):
                 status=403,
             )
 
+        process_expired_turn(room_id=room_id)
         session = get_object_or_404(_game_session_queryset(), room=room)
 
         return Response(
@@ -101,6 +103,13 @@ class PlayDominoView(APIView):
         serializer.is_valid(raise_exception=True)
 
         player_id = serializer.validated_data["player_id"]
+        timeout_response = _timeout_response_if_processed(
+            room_id=room_id,
+            player_id=player_id,
+        )
+        if timeout_response is not None:
+            return timeout_response
+
         session = play_domino(
             room_id=room_id,
             player_id=player_id,
@@ -126,6 +135,13 @@ class DrawDominoView(APIView):
         serializer.is_valid(raise_exception=True)
         player_id = serializer.validated_data["player_id"]
 
+        timeout_response = _timeout_response_if_processed(
+            room_id=room_id,
+            player_id=player_id,
+        )
+        if timeout_response is not None:
+            return timeout_response
+
         session = draw_domino(room_id=room_id, player_id=player_id)
         session = _game_session_queryset().get(pk=session.pk)
 
@@ -146,6 +162,13 @@ class PassTurnView(APIView):
         serializer.is_valid(raise_exception=True)
         player_id = serializer.validated_data["player_id"]
 
+        timeout_response = _timeout_response_if_processed(
+            room_id=room_id,
+            player_id=player_id,
+        )
+        if timeout_response is not None:
+            return timeout_response
+
         session = pass_turn(room_id=room_id, player_id=player_id)
         session = _game_session_queryset().get(pk=session.pk)
 
@@ -158,6 +181,30 @@ class PassTurnView(APIView):
                 ),
             }
         )
+
+
+def _timeout_response_if_processed(*, room_id, player_id):
+    if not RoomPlayer.objects.filter(
+        pk=player_id,
+        room_id=room_id,
+        is_active=True,
+    ).exists():
+        return None
+
+    if not process_expired_turn(room_id=room_id):
+        return None
+
+    session = get_object_or_404(_game_session_queryset(), room_id=room_id)
+    return Response(
+        {
+            "type": "game_state",
+            "timeout_processed": True,
+            "game": game_state_for_player(
+                session=session,
+                player_id=player_id,
+            ),
+        }
+    )
 
 
 def _game_session_queryset():
