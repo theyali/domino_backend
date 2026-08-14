@@ -81,6 +81,7 @@ def send_gift_to_room_players(
             owner=sender_user,
             gift=gift,
             status=InventoryGift.Status.AVAILABLE,
+            is_giftable=True,
         )
         .order_by("id")[: len(recipients)]
     )
@@ -89,7 +90,7 @@ def send_gift_to_room_players(
         raise ValidationError(
             {
                 "gift": (
-                    f"В инвентаре недостаточно подарков «{gift.name}». "
+                    f"В инвентаре недостаточно подарков «{gift.name}», которые можно подарить. "
                     f"Нужно: {len(recipients)}, есть: {len(inventory_items)}."
                 )
             }
@@ -100,7 +101,8 @@ def send_gift_to_room_players(
 
     for inventory_item, recipient in zip(inventory_items, recipients, strict=True):
         inventory_item.owner = recipient.user
-        inventory_item.save(update_fields=["owner"])
+        inventory_item.is_giftable = False
+        inventory_item.save(update_fields=["owner", "is_giftable"])
         transferred_inventory_ids.append(inventory_item.id)
 
         recipient.active_gift = gift
