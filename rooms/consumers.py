@@ -124,6 +124,7 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
         return RoomPlayer.objects.filter(
             pk=player_id,
             room_id=self.room_id,
+            is_active=True,
         ).exists()
 
     @database_sync_to_async
