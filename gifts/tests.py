@@ -96,6 +96,7 @@ class GiftApiTests(APITestCase):
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["id"], mine.id)
         self.assertEqual(response.data[0]["gift"]["name"], "Кальян")
+        self.assertTrue(response.data[0]["is_giftable"])
         self.assertEqual(
             response.data[0]["gift"]["image_url"],
             "http://testserver/media/gifts/hookah.png",
@@ -129,8 +130,7 @@ class MultiplayerGiftTests(APITestCase):
         self.alex = User.objects.create_user(username="alex", password="secret123")
         self.annie = User.objects.create_user(username="annie", password="secret123")
 
-        token = Token.objects.create(user=self.ali)
-        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        self._authenticate(self.ali)
 
         self.restaurant = Restaurant.objects.create(
             name="Gift Room Restaurant",
@@ -178,6 +178,11 @@ class MultiplayerGiftTests(APITestCase):
             price="10.00",
         )
 
+    def _authenticate(self, user):
+        Token.objects.filter(user=user).delete()
+        token = Token.objects.create(user=user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+
     def _send(self, gift, recipients):
         return self.client.post(
             reverse("send-room-gift", args=[self.room.id]),
@@ -196,6 +201,7 @@ class MultiplayerGiftTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         item.refresh_from_db()
         self.assertEqual(item.owner_id, self.ali.id)
+        self.assertTrue(item.is_giftable)
 
     def test_send_same_gift_to_three_players_transfers_three_inventory_items(self):
         items = [
@@ -211,12 +217,14 @@ class MultiplayerGiftTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data["recipient_player_ids"]), 3)
 
-        expected_owners = {self.john.id, self.alex.id, self.annie.id}
-        actual_owners = set(
+        transferred = list(
             InventoryGift.objects.filter(id__in=[item.id for item in items])
-            .values_list("owner_id", flat=True)
         )
-        self.assertEqual(actual_owners, expected_owners)
+        self.assertEqual(
+            {item.owner_id for item in transferred},
+            {self.john.id, self.alex.id, self.annie.id},
+        )
+        self.assertTrue(all(not item.is_giftable for item in transferred))
 
         for player in (
             self.john_player,
@@ -243,6 +251,27 @@ class MultiplayerGiftTests(APITestCase):
         self.assertEqual(self.john_player.active_gift_id, self.beer.id)
         self.assertEqual(old_item.owner_id, self.john.id)
         self.assertEqual(new_item.owner_id, self.john.id)
+        self.assertFalse(old_item.is_giftable)
+        self.assertFalse(new_item.is_giftable)
+
+    def test_received_gift_cannot_be_regifted(self):
+        item = InventoryGift.objects.create(owner=self.ali, gift=self.hookah)
+
+        first = self._send(self.hookah, [self.john_player.id])
+        self.assertEqual(first.status_code, 200)
+
+        item.refresh_from_db()
+        self.assertEqual(item.owner_id, self.john.id)
+        self.assertFalse(item.is_giftable)
+
+        self._authenticate(self.john)
+        second = self._send(self.hookah, [self.alex_player.id])
+
+        self.assertEqual(second.status_code, 400)
+        item.refresh_from_db()
+        self.assertEqual(item.owner_id, self.john.id)
+        self.alex_player.refresh_from_db()
+        self.assertIsNone(self.alex_player.active_gift_id)
 
     def test_not_enough_copies_rolls_back_entire_multi_send(self):
         items = [
@@ -259,6 +288,12 @@ class MultiplayerGiftTests(APITestCase):
         self.assertTrue(
             all(
                 InventoryGift.objects.get(pk=item.id).owner_id == self.ali.id
+                for item in items
+            )
+        )
+        self.assertTrue(
+            all(
+                InventoryGift.objects.get(pk=item.id).is_giftable
                 for item in items
             )
         )
