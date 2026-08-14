@@ -43,11 +43,10 @@ class RestaurantRoomsView(APIView):
 
         room = create_room(
             restaurant=restaurant,
-            owner_name=serializer.validated_data["owner_name"],
+            user=request.user,
             max_players=serializer.validated_data["max_players"],
             password=serializer.validated_data.get("password", ""),
             name=serializer.validated_data.get("name", ""),
-            user=request.user,
         )
         room = GameRoom.objects.prefetch_related("players").get(pk=room.pk)
         return Response(
@@ -74,9 +73,8 @@ class JoinRoomView(APIView):
 
         room, player = join_room(
             room_id=room_id,
-            player_name=serializer.validated_data["player_name"],
-            password=serializer.validated_data.get("password", ""),
             user=request.user,
+            password=serializer.validated_data.get("password", ""),
         )
         room = GameRoom.objects.prefetch_related("players").get(pk=room.pk)
 
