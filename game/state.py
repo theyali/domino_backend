@@ -26,6 +26,12 @@ def serialize_game_state_for_player(session, player_id):
                 "seat_index": player.seat_index,
                 "is_owner": player.is_owner,
                 "is_active": player.is_active,
+                "is_online": player.is_online,
+                "last_seen_at": (
+                    player.last_seen_at.isoformat()
+                    if player.last_seen_at is not None
+                    else None
+                ),
                 "score": int(scores.get(str(player.id), 0)),
                 "domino_count": len(hands.get(str(player.id), [])),
             }
