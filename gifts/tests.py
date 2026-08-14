@@ -39,7 +39,7 @@ class GiftApiTests(APITestCase):
             restaurant=self.restaurant,
             name="Кальян",
             price="25.00",
-            icon_url="https://example.com/hookah.png",
+            image="gifts/hookah.png",
         )
         self.tea = Gift.objects.create(
             restaurant=self.restaurant,
@@ -72,7 +72,18 @@ class GiftApiTests(APITestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["name"] for item in response.data], ["Чай", "Кальян"])
-        self.assertTrue(all(item["restaurant_id"] == self.restaurant.id for item in response.data))
+        self.assertTrue(
+            all(item["restaurant_id"] == self.restaurant.id for item in response.data)
+        )
+
+        tea_data = next(item for item in response.data if item["name"] == "Чай")
+        hookah_data = next(item for item in response.data if item["name"] == "Кальян")
+
+        self.assertIsNone(tea_data["image_url"])
+        self.assertEqual(
+            hookah_data["image_url"],
+            "http://testserver/media/gifts/hookah.png",
+        )
 
     def test_inventory_returns_only_current_user_items(self):
         mine = InventoryGift.objects.create(owner=self.user, gift=self.hookah)
@@ -84,6 +95,10 @@ class GiftApiTests(APITestCase):
         self.assertEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["id"], mine.id)
         self.assertEqual(response.data[0]["gift"]["name"], "Кальян")
+        self.assertEqual(
+            response.data[0]["gift"]["image_url"],
+            "http://testserver/media/gifts/hookah.png",
+        )
         self.assertEqual(
             response.data[0]["qr_code"],
             f"domino-gift://redeem/{mine.qr_token}",
