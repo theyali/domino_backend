@@ -1,7 +1,7 @@
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework import serializers
 
-from rooms.models import RoomPlayer
+from rooms.models import GameRoom, RoomPlayer
 
 from .models import UserProfile
 
@@ -76,25 +76,34 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def update(self, instance, validated_data):
-        avatar = validated_data.pop("avatar", serializers.empty)
+        avatar_was_provided = "avatar" in validated_data
+        avatar = validated_data.pop("avatar", None)
 
         instance.username = validated_data.get("username", instance.username)
         instance.email = validated_data.get("email", instance.email)
         instance.first_name = validated_data.get("first_name", instance.first_name)
         instance.save(update_fields=["username", "email", "first_name"])
 
-        if avatar is not serializers.empty:
+        if avatar_was_provided:
             profile, _ = UserProfile.objects.get_or_create(user=instance)
             if profile.avatar:
                 profile.avatar.delete(save=False)
             profile.avatar = avatar
             profile.save()
 
-        display_name = (instance.get_full_name() or instance.username).strip()
-        RoomPlayer.objects.filter(
+        display_name = (instance.get_full_name() or instance.username).strip()[:40]
+        active_players = RoomPlayer.objects.filter(
             user=instance,
             is_active=True,
-        ).update(name=display_name[:40])
+        )
+        owned_room_ids = list(
+            active_players.filter(is_owner=True).values_list("room_id", flat=True)
+        )
+        active_players.update(name=display_name)
+        if owned_room_ids:
+            GameRoom.objects.filter(pk__in=owned_room_ids).update(
+                owner_name=display_name,
+            )
 
         return instance
 
