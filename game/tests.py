@@ -13,7 +13,13 @@ from .engine import (
     playable_sides,
 )
 from .models import GameSession
-from .services import draw_domino, pass_turn, play_domino, start_game
+from .services import (
+    draw_domino,
+    pass_turn,
+    play_domino,
+    start_game,
+    start_next_round,
+)
 
 
 class GameEngineTests(TestCase):
@@ -232,6 +238,7 @@ class GameActionTests(TestCase):
         self.assertEqual(len(session.boneyard), 0)
         self.assertEqual(len(session.hands[str(self.ali.id)]), 2)
         self.assertEqual(session.hands[str(self.ali.id)][-1]["id"], 30)
+        self.assertEqual(session.consecutive_passes, 0)
 
     def test_draw_is_rejected_when_player_already_has_move(self):
         session = self._create_session()
@@ -272,6 +279,7 @@ class GameActionTests(TestCase):
 
         self.assertEqual(session.current_player_id, self.john.id)
         self.assertEqual(session.version, 2)
+        self.assertEqual(session.consecutive_passes, 1)
 
     def test_pass_is_rejected_while_boneyard_has_dominoes(self):
         session = self._create_session()
@@ -291,3 +299,142 @@ class GameActionTests(TestCase):
 
         with self.assertRaises(ValidationError):
             pass_turn(room_id=self.room.id, player_id=self.ali.id)
+
+    def test_last_domino_finishes_round_and_records_penalty(self):
+        session = self._create_session()
+        session.table = [
+            {
+                "id": 99,
+                "left": 6,
+                "right": 6,
+                "played_by_player_id": self.john.id,
+                "side": "center",
+                "move_number": 1,
+            }
+        ]
+        session.hands = {
+            str(self.ali.id): [{"id": 11, "left": 6, "right": 2}],
+            str(self.john.id): [
+                {"id": 20, "left": 6, "right": 6},
+                {"id": 21, "left": 5, "right": 5},
+            ],
+        }
+        session.current_player = self.ali
+        session.save(update_fields=["table", "hands", "current_player", "updated_at"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            session = play_domino(
+                room_id=self.room.id,
+                player_id=self.ali.id,
+                domino_id=11,
+                side="right",
+            )
+
+        self.assertEqual(session.status, GameSession.Status.ROUND_FINISHED)
+        self.assertEqual(session.scores[str(self.john.id)], 22)
+        self.assertEqual(session.last_round_result["reason"], "domino")
+        self.assertEqual(
+            session.last_round_result["winner_player_ids"],
+            [self.ali.id],
+        )
+
+    def test_reaching_101_finishes_match(self):
+        session = self._create_session()
+        session.table = [
+            {
+                "id": 99,
+                "left": 6,
+                "right": 6,
+                "played_by_player_id": self.john.id,
+                "side": "center",
+                "move_number": 1,
+            }
+        ]
+        session.hands = {
+            str(self.ali.id): [{"id": 11, "left": 6, "right": 2}],
+            str(self.john.id): [
+                {"id": 20, "left": 6, "right": 6},
+                {"id": 21, "left": 5, "right": 5},
+            ],
+        }
+        session.scores = {str(self.ali.id): 0, str(self.john.id): 90}
+        session.current_player = self.ali
+        session.save(
+            update_fields=["table", "hands", "scores", "current_player", "updated_at"]
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            session = play_domino(
+                room_id=self.room.id,
+                player_id=self.ali.id,
+                domino_id=11,
+                side="right",
+            )
+
+        self.room.refresh_from_db()
+        self.assertEqual(session.status, GameSession.Status.FINISHED)
+        self.assertEqual(self.room.status, GameRoom.Status.FINISHED)
+        self.assertGreaterEqual(session.scores[str(self.john.id)], 101)
+        self.assertIn(
+            self.john.id,
+            session.last_round_result["match_loser_player_ids"],
+        )
+
+    def test_consecutive_passes_finish_fish_round(self):
+        session = self._create_session()
+        session.table = [
+            {
+                "id": 99,
+                "left": 6,
+                "right": 6,
+                "played_by_player_id": self.john.id,
+                "side": "center",
+                "move_number": 1,
+            }
+        ]
+        session.hands = {
+            str(self.ali.id): [{"id": 11, "left": 1, "right": 2}],
+            str(self.john.id): [{"id": 21, "left": 3, "right": 4}],
+        }
+        session.boneyard = []
+        session.current_player = self.ali
+        session.save(
+            update_fields=["table", "hands", "boneyard", "current_player", "updated_at"]
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            session = pass_turn(room_id=self.room.id, player_id=self.ali.id)
+        self.assertEqual(session.status, GameSession.Status.ACTIVE)
+        self.assertEqual(session.current_player_id, self.john.id)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            session = pass_turn(room_id=self.room.id, player_id=self.john.id)
+
+        self.assertEqual(session.status, GameSession.Status.ROUND_FINISHED)
+        self.assertEqual(session.last_round_result["reason"], "fish")
+        self.assertEqual(
+            session.last_round_result["winner_player_ids"],
+            [self.ali.id],
+        )
+
+    def test_owner_can_start_next_round_and_scores_are_preserved(self):
+        session = self._create_session()
+        session.status = GameSession.Status.ROUND_FINISHED
+        session.scores = {str(self.ali.id): 0, str(self.john.id): 22}
+        session.last_round_result = {"reason": "domino"}
+        session.save(update_fields=["status", "scores", "last_round_result", "updated_at"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            session = start_next_round(
+                room_id=self.room.id,
+                player_id=self.ali.id,
+            )
+
+        self.assertEqual(session.status, GameSession.Status.ACTIVE)
+        self.assertEqual(session.round_number, 2)
+        self.assertEqual(session.scores[str(self.john.id)], 22)
+        self.assertEqual(len(session.hands[str(self.ali.id)]), 7)
+        self.assertEqual(len(session.hands[str(self.john.id)]), 7)
+        self.assertEqual(len(session.boneyard), 14)
+        self.assertEqual(session.table, [])
+        self.assertEqual(session.last_round_result, {})
