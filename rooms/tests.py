@@ -2,6 +2,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from game.models import GameSession
 from restaurants.models import Restaurant
 from rooms.models import GameRoom, RoomPlayer
 
@@ -144,3 +145,71 @@ class RoomApiTests(APITestCase):
         self.assertEqual(last_left.status_code, status.HTTP_200_OK)
         self.assertTrue(last_left.data["room_deleted"])
         self.assertFalse(GameRoom.objects.filter(pk=room_id).exists())
+
+    def test_active_game_survives_first_exit_and_table_is_deleted_after_last_exit(self):
+        room = GameRoom.objects.create(
+            restaurant=self.restaurant,
+            owner_name="Ali",
+            max_players=2,
+            status=GameRoom.Status.PLAYING,
+        )
+        ali = RoomPlayer.objects.create(
+            room=room,
+            name="Ali",
+            seat_index=0,
+            is_owner=True,
+        )
+        john = RoomPlayer.objects.create(
+            room=room,
+            name="John",
+            seat_index=1,
+        )
+        session = GameSession.objects.create(
+            room=room,
+            current_player=ali,
+            opening_player=ali,
+            opening_domino_id=10,
+            hands={
+                str(ali.id): [{"id": 10, "left": 6, "right": 6}],
+                str(john.id): [{"id": 20, "left": 5, "right": 6}],
+            },
+            boneyard=[],
+            table=[],
+            scores={str(ali.id): 0, str(john.id): 0},
+        )
+
+        first_left = self.client.post(
+            reverse("room-leave", args=[room.id]),
+            {"player_id": ali.id},
+            format="json",
+        )
+
+        self.assertEqual(first_left.status_code, status.HTTP_200_OK)
+        self.assertFalse(first_left.data["room_deleted"])
+        self.assertTrue(GameRoom.objects.filter(pk=room.id).exists())
+        self.assertTrue(GameSession.objects.filter(pk=session.id).exists())
+
+        session.refresh_from_db()
+        room.refresh_from_db()
+        ali.refresh_from_db()
+        john.refresh_from_db()
+
+        self.assertFalse(ali.is_active)
+        self.assertTrue(john.is_active)
+        self.assertTrue(john.is_owner)
+        self.assertEqual(room.current_players, 1)
+        self.assertEqual(room.status, GameRoom.Status.FINISHED)
+        self.assertEqual(session.status, GameSession.Status.FINISHED)
+        self.assertEqual(session.last_round_result["reason"], "player_left")
+        self.assertEqual(session.last_round_result["left_player_id"], ali.id)
+
+        last_left = self.client.post(
+            reverse("room-leave", args=[room.id]),
+            {"player_id": john.id},
+            format="json",
+        )
+
+        self.assertEqual(last_left.status_code, status.HTTP_200_OK)
+        self.assertTrue(last_left.data["room_deleted"])
+        self.assertFalse(GameRoom.objects.filter(pk=room.id).exists())
+        self.assertFalse(GameSession.objects.filter(pk=session.id).exists())
