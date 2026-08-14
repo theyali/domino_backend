@@ -14,6 +14,17 @@ def _serialize_active_gift(player):
     }
 
 
+def _avatar_url_for_player(player):
+    user = player.user
+    if user is None:
+        return None
+
+    profile = getattr(user, "profile", None)
+    if profile is None or not profile.avatar:
+        return None
+    return profile.avatar.url
+
+
 def serialize_game_state_for_player(session, player_id):
     room = session.room
     players = list(room.players.all())
@@ -51,6 +62,7 @@ def serialize_game_state_for_player(session, player_id):
                 "id": player.id,
                 "user_id": player.user_id,
                 "name": player.name,
+                "avatar_url": _avatar_url_for_player(player),
                 "seat_index": player.seat_index,
                 "is_owner": player.is_owner,
                 "is_active": player.is_active,
