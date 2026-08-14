@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     "restaurants",
     "rooms",
     "game",
+    "gifts",
 ]
 
 MIDDLEWARE = [
