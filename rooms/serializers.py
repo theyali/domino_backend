@@ -4,17 +4,33 @@ from .models import GameRoom, RoomPlayer
 
 
 class RoomPlayerSerializer(serializers.ModelSerializer):
+    active_gift = serializers.SerializerMethodField()
+
     class Meta:
         model = RoomPlayer
         fields = (
             "id",
+            "user_id",
             "name",
             "seat_index",
             "is_owner",
             "is_active",
             "is_online",
             "last_seen_at",
+            "active_gift",
         )
+
+    def get_active_gift(self, obj):
+        gift = obj.active_gift
+        if gift is None:
+            return None
+
+        return {
+            "id": gift.id,
+            "restaurant_id": gift.restaurant_id,
+            "name": gift.name,
+            "image_url": gift.image.url if gift.image else None,
+        }
 
 
 class GameRoomSerializer(serializers.ModelSerializer):
