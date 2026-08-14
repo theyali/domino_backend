@@ -1,3 +1,6 @@
+from django.utils import timezone
+
+
 def serialize_game_state_for_player(session, player_id):
     room = session.room
     players = list(room.players.all())
@@ -11,6 +14,7 @@ def serialize_game_state_for_player(session, player_id):
         "status": session.status,
         "round_number": session.round_number,
         "version": session.version,
+        "server_time": timezone.now().isoformat(),
         "current_player_id": session.current_player_id,
         "opening_player_id": session.opening_player_id,
         "opening_domino_id": session.opening_domino_id,
