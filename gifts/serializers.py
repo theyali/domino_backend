@@ -41,6 +41,7 @@ class InventoryGiftSerializer(serializers.ModelSerializer):
             "gift",
             "qr_code",
             "status",
+            "is_giftable",
             "acquired_at",
             "redeemed_at",
         )
