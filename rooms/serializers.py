@@ -6,6 +6,7 @@ from .models import GameRoom, RoomPlayer
 class RoomPlayerSerializer(serializers.ModelSerializer):
     active_gift = serializers.SerializerMethodField()
     avatar_url = serializers.SerializerMethodField()
+    gender = serializers.SerializerMethodField()
 
     class Meta:
         model = RoomPlayer
@@ -14,6 +15,7 @@ class RoomPlayerSerializer(serializers.ModelSerializer):
             "user_id",
             "name",
             "avatar_url",
+            "gender",
             "seat_index",
             "is_owner",
             "is_active",
@@ -31,6 +33,13 @@ class RoomPlayerSerializer(serializers.ModelSerializer):
         if profile is None or not profile.avatar:
             return None
         return profile.avatar.url
+
+    def get_gender(self, obj):
+        user = obj.user
+        if user is None:
+            return ""
+        profile = getattr(user, "profile", None)
+        return profile.gender if profile is not None else ""
 
     def get_active_gift(self, obj):
         gift = obj.active_gift
