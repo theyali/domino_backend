@@ -17,7 +17,123 @@ class UserProfile(models.Model):
     games_played = models.PositiveIntegerField(default=0)
     wins = models.PositiveIntegerField(default=0)
     losses = models.PositiveIntegerField(default=0)
+    # Глобальный presence для друзей/приглашений. Flutter присылает heartbeat,
+    # поэтому отдельное постоянное is_online поле не нужно: online вычисляется
+    # по свежести last_seen_at и само протухает, если приложение закрыто.
+    last_seen_at = models.DateTimeField(null=True, blank=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"Profile #{self.pk} — {self.user_id}"
+
+
+class Friendship(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Ожидает"
+        ACCEPTED = "accepted", "Друзья"
+
+    requester = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sent_friendships",
+    )
+    addressee = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="received_friendships",
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["requester", "addressee"],
+                name="unique_friendship_direction",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.requester_id} → {self.addressee_id} ({self.status})"
+
+
+class DirectMessage(models.Model):
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sent_direct_messages",
+    )
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="received_direct_messages",
+    )
+    body = models.CharField(max_length=1000)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(
+                fields=["sender", "recipient", "created_at"],
+                name="dm_sender_recipient_idx",
+            ),
+            models.Index(
+                fields=["recipient", "sender", "created_at"],
+                name="dm_recipient_sender_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"DM #{self.pk}: {self.sender_id} → {self.recipient_id}"
+
+
+class RoomInvitation(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Ожидает"
+        ACCEPTED = "accepted", "Принято"
+        DECLINED = "declined", "Отклонено"
+
+    room = models.ForeignKey(
+        "rooms.GameRoom",
+        on_delete=models.CASCADE,
+        related_name="social_invitations",
+    )
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sent_room_invitations",
+    )
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="received_room_invitations",
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["room", "recipient"],
+                name="unique_room_invitation_recipient",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Invite #{self.pk}: room {self.room_id} → {self.recipient_id}"
