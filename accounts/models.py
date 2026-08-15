@@ -131,7 +131,7 @@ class RoomInvitation(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["room", "recipient"],
-                name="unique_room_invitation_recipient",
+                name="unique_room_invite_recipient",
             ),
         ]
 
