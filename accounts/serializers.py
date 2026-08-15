@@ -169,3 +169,29 @@ class LoginSerializer(serializers.Serializer):
             )
         attrs["user"] = user
         return attrs
+
+
+class FriendRequestCreateSerializer(serializers.Serializer):
+    user_id = serializers.IntegerField(min_value=1)
+
+
+class DirectMessageCreateSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=1000, allow_blank=False, trim_whitespace=True)
+
+    def validate_body(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Сообщение не может быть пустым.")
+        return value
+
+
+class RoomInvitationCreateSerializer(serializers.Serializer):
+    user_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+        min_length=1,
+        max_length=100,
+    )
+
+    def validate_user_ids(self, value):
+        return list(dict.fromkeys(value))
