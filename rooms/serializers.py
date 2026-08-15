@@ -47,6 +47,7 @@ class RoomPlayerSerializer(serializers.ModelSerializer):
 
 class GameRoomSerializer(serializers.ModelSerializer):
     display_name = serializers.CharField(read_only=True)
+    game_mode_label = serializers.CharField(read_only=True)
     current_players = serializers.IntegerField(read_only=True)
     is_locked = serializers.BooleanField(source="has_password", read_only=True)
     is_full = serializers.BooleanField(read_only=True)
@@ -61,6 +62,9 @@ class GameRoomSerializer(serializers.ModelSerializer):
             "display_name",
             "owner_name",
             "max_players",
+            "game_mode",
+            "game_mode_label",
+            "target_score",
             "current_players",
             "is_locked",
             "is_full",
@@ -72,6 +76,15 @@ class GameRoomSerializer(serializers.ModelSerializer):
 
 class GameRoomCreateSerializer(serializers.Serializer):
     max_players = serializers.IntegerField(min_value=2, max_value=4)
+    game_mode = serializers.ChoiceField(
+        choices=GameRoom.GameMode.choices,
+        default=GameRoom.GameMode.CLASSIC_101,
+    )
+    target_score = serializers.IntegerField(
+        min_value=5,
+        max_value=500,
+        required=False,
+    )
     password = serializers.CharField(
         max_length=64,
         required=False,
@@ -83,6 +96,21 @@ class GameRoomCreateSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
     )
+
+    def validate(self, attrs):
+        game_mode = attrs.get("game_mode", GameRoom.GameMode.CLASSIC_101)
+        max_players = attrs["max_players"]
+
+        if game_mode == GameRoom.GameMode.CLASSIC_101:
+            if max_players != 2:
+                raise serializers.ValidationError(
+                    {"max_players": "Для правила 101 нужен стол на 2 игроков."}
+                )
+            attrs["target_score"] = 101
+            return attrs
+
+        attrs["target_score"] = attrs.get("target_score", 72)
+        return attrs
 
 
 class JoinRoomSerializer(serializers.Serializer):
