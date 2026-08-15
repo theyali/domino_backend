@@ -1,6 +1,12 @@
 from django.contrib import admin
 
-from .models import DirectMessage, Friendship, RoomInvitation, UserProfile
+from .models import (
+    DirectMessage,
+    Friendship,
+    RecentPlayerEncounter,
+    RoomInvitation,
+    UserProfile,
+)
 
 
 @admin.register(UserProfile)
@@ -34,6 +40,19 @@ class FriendshipAdmin(admin.ModelAdmin):
         "addressee__email",
     )
     autocomplete_fields = ("requester", "addressee")
+
+
+@admin.register(RecentPlayerEncounter)
+class RecentPlayerEncounterAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "other_user", "last_played_at")
+    search_fields = (
+        "user__username",
+        "user__email",
+        "other_user__username",
+        "other_user__email",
+    )
+    autocomplete_fields = ("user", "other_user")
+    ordering = ("-last_played_at",)
 
 
 @admin.register(DirectMessage)
