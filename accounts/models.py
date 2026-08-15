@@ -4,6 +4,10 @@ from django.utils import timezone
 
 
 class UserProfile(models.Model):
+    class Gender(models.TextChoices):
+        MALE = "male", "Мужской"
+        FEMALE = "female", "Женский"
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -13,6 +17,12 @@ class UserProfile(models.Model):
         upload_to="avatars/",
         null=True,
         blank=True,
+    )
+    gender = models.CharField(
+        max_length=8,
+        choices=Gender.choices,
+        blank=True,
+        default="",
     )
     league_points = models.PositiveIntegerField(default=0)
     games_played = models.PositiveIntegerField(default=0)
