@@ -1,6 +1,7 @@
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
+from accounts.ranking import record_match_statistics
 from rooms.models import GameRoom, RoomPlayer
 from rooms.realtime import broadcast_game_state_updated
 
@@ -63,6 +64,13 @@ def surrender_game(*, room_id, player_id):
             "version",
             "updated_at",
         ]
+    )
+
+    record_match_statistics(
+        session=session,
+        players=players,
+        winner_player_ids=winner_ids,
+        loser_player_ids=[player_id],
     )
 
     room.status = GameRoom.Status.FINISHED
