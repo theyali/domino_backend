@@ -13,6 +13,10 @@ class GameRoom(models.Model):
         PLAYING = "playing", "Игра"
         FINISHED = "finished", "Завершена"
 
+    class GameMode(models.TextChoices):
+        CLASSIC_101 = "101", "101"
+        PHONE = "phone", "Телефон"
+
     restaurant = models.ForeignKey(
         Restaurant,
         on_delete=models.CASCADE,
@@ -23,6 +27,12 @@ class GameRoom(models.Model):
     max_players = models.PositiveSmallIntegerField(
         validators=[MinValueValidator(2), MaxValueValidator(4)]
     )
+    game_mode = models.CharField(
+        max_length=16,
+        choices=GameMode.choices,
+        default=GameMode.CLASSIC_101,
+    )
+    target_score = models.PositiveSmallIntegerField(default=101)
     password_hash = models.CharField(max_length=128, blank=True)
     status = models.CharField(
         max_length=16,
@@ -52,6 +62,10 @@ class GameRoom(models.Model):
     @property
     def is_full(self):
         return self.current_players >= self.max_players
+
+    @property
+    def game_mode_label(self):
+        return self.get_game_mode_display()
 
     def set_password(self, raw_password):
         raw_password = (raw_password or "").strip()
