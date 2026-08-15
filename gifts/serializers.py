@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Gift, InventoryGift
+from .models import Gift, GiftPurchase, InventoryGift
 
 
 class GiftSerializer(serializers.ModelSerializer):
@@ -63,6 +63,25 @@ class InventoryGiftSerializer(serializers.ModelSerializer):
 
         full_name = (sender.get_full_name() or "").strip()
         return full_name or sender.username
+
+
+class GiftPurchaseSerializer(serializers.ModelSerializer):
+    gift = GiftSerializer(read_only=True)
+    total_price = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GiftPurchase
+        fields = (
+            "id",
+            "gift",
+            "quantity",
+            "unit_price",
+            "total_price",
+            "purchased_at",
+        )
+
+    def get_total_price(self, obj):
+        return f"{obj.total_price:.2f}"
 
 
 class PurchaseGiftSerializer(serializers.Serializer):
