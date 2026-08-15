@@ -1,5 +1,9 @@
 from django.utils import timezone
 
+from rooms.models import GameRoom
+
+from .engine import phone_open_end_sum, phone_open_ends
+
 
 def _serialize_active_gift(player):
     gift = player.active_gift
@@ -31,10 +35,17 @@ def serialize_game_state_for_player(session, player_id):
     hands = session.hands or {}
     scores = session.scores or {}
     my_hand = hands.get(str(player_id), [])
+    table = session.table or []
+    is_phone = room.game_mode == GameRoom.GameMode.PHONE
+
+    phone_ends = phone_open_ends(table) if is_phone and table else {}
 
     return {
         "game_id": session.pk,
         "room_id": room.pk,
+        "game_mode": room.game_mode,
+        "game_mode_label": room.game_mode_label,
+        "target_score": room.target_score,
         "status": session.status,
         "round_number": session.round_number,
         "version": session.version,
@@ -53,7 +64,9 @@ def serialize_game_state_for_player(session, player_id):
             else None
         ),
         "boneyard_count": len(session.boneyard or []),
-        "table": session.table or [],
+        "table": table,
+        "phone_open_ends": phone_ends,
+        "phone_open_sum": phone_open_end_sum(table) if phone_ends else 0,
         "my_player_id": player_id,
         "my_hand": my_hand,
         "round_result": session.last_round_result or None,
