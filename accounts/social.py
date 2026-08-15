@@ -6,7 +6,13 @@ from django.utils import timezone
 
 from rooms.models import GameRoom, RoomPlayer
 
-from .models import DirectMessage, Friendship, RoomInvitation, UserProfile
+from .models import (
+    DirectMessage,
+    Friendship,
+    RecentPlayerEncounter,
+    RoomInvitation,
+    UserProfile,
+)
 
 
 User = get_user_model()
@@ -97,36 +103,44 @@ def invitation_payload(invitation, viewer):
     }
 
 
-def recent_players_for(user, *, limit=30):
-    room_ids = list(
-        RoomPlayer.objects.filter(user=user).values_list("room_id", flat=True).distinct()
-    )
-    if not room_ids:
-        return []
-
-    rows = (
-        RoomPlayer.objects.filter(room_id__in=room_ids, user__isnull=False)
-        .exclude(user=user)
-        .select_related("user", "user__profile")
-        .order_by("-joined_at", "-id")
-    )
-    seen = set()
-    result = []
-    for row in rows:
-        other = row.user
-        if other.id in seen:
-            continue
-        seen.add(other.id)
-        result.append(
-            public_user_payload(
-                other,
-                user,
-                last_played_at=row.joined_at,
-            )
+def record_recent_players(players):
+    """Сохраняет соперников независимо от жизни GameRoom/RoomPlayer."""
+    user_ids = list(
+        dict.fromkeys(
+            player.user_id
+            for player in players
+            if getattr(player, "user_id", None) is not None
         )
-        if len(result) >= limit:
-            break
-    return result
+    )
+    if len(user_ids) < 2:
+        return
+
+    played_at = timezone.now()
+    for user_id in user_ids:
+        for other_user_id in user_ids:
+            if user_id == other_user_id:
+                continue
+            RecentPlayerEncounter.objects.update_or_create(
+                user_id=user_id,
+                other_user_id=other_user_id,
+                defaults={"last_played_at": played_at},
+            )
+
+
+def recent_players_for(user, *, limit=10):
+    encounters = (
+        RecentPlayerEncounter.objects.filter(user=user)
+        .select_related("other_user", "other_user__profile")
+        .order_by("-last_played_at", "-id")[:limit]
+    )
+    return [
+        public_user_payload(
+            encounter.other_user,
+            user,
+            last_played_at=encounter.last_played_at,
+        )
+        for encounter in encounters
+    ]
 
 
 def can_message(user, other_user):
@@ -137,6 +151,13 @@ def can_message(user, other_user):
     if friendship is not None and friendship.status == Friendship.Status.ACCEPTED:
         return True
 
+    if RecentPlayerEncounter.objects.filter(
+        user=user,
+        other_user=other_user,
+    ).exists():
+        return True
+
+    # Fallback для старых комнат до применения миграции/backfill.
     room_ids = RoomPlayer.objects.filter(user=user).values_list("room_id", flat=True)
     return RoomPlayer.objects.filter(
         room_id__in=room_ids,
@@ -230,7 +251,7 @@ def social_overview(user):
     return {
         "friends": friends,
         "incoming_requests": incoming_requests,
-        "recent_players": recent_players_for(user),
+        "recent_players": recent_players_for(user, limit=10),
         "conversations": conversations,
         "invitations": invitations,
     }
