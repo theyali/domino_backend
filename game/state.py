@@ -29,6 +29,13 @@ def _avatar_url_for_player(player):
     return profile.avatar.url
 
 
+def _dominoes_with_mode(dominoes, game_mode):
+    return [
+        {**domino, "game_mode": game_mode}
+        for domino in dominoes
+    ]
+
+
 def serialize_game_state_for_player(session, player_id):
     room = session.room
     players = list(room.players.all())
@@ -64,11 +71,11 @@ def serialize_game_state_for_player(session, player_id):
             else None
         ),
         "boneyard_count": len(session.boneyard or []),
-        "table": table,
+        "table": _dominoes_with_mode(table, room.game_mode),
         "phone_open_ends": phone_ends,
         "phone_open_sum": phone_open_end_sum(table) if phone_ends else 0,
         "my_player_id": player_id,
-        "my_hand": my_hand,
+        "my_hand": _dominoes_with_mode(my_hand, room.game_mode),
         "round_result": session.last_round_result or None,
         "players": [
             {
