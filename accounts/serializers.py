@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from rooms.models import GameRoom, RoomPlayer
 
-from .models import UserProfile
+from .models import PushDevice, UserProfile
 
 User = get_user_model()
 
@@ -195,3 +195,29 @@ class RoomInvitationCreateSerializer(serializers.Serializer):
 
     def validate_user_ids(self, value):
         return list(dict.fromkeys(value))
+
+
+class NotificationPreferencesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserProfile
+        fields = (
+            "push_notifications_enabled",
+            "notify_friend_requests",
+            "notify_room_invites",
+            "notify_direct_messages",
+        )
+
+
+class PushDeviceSerializer(serializers.Serializer):
+    registration_token = serializers.CharField(max_length=512)
+    platform = serializers.ChoiceField(choices=PushDevice.Platform.choices)
+
+    def validate_registration_token(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Пустой push token.")
+        return value
+
+
+class PushDeviceDeleteSerializer(serializers.Serializer):
+    registration_token = serializers.CharField(max_length=512)
