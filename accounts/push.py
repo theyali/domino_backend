@@ -72,10 +72,7 @@ def send_social_push(*, user, kind, title, body, data=None):
                 data=payload,
                 android=messaging.AndroidConfig(
                     priority="high",
-                    notification=messaging.AndroidNotification(
-                        channel_id="social",
-                        sound="default",
-                    ),
+                    notification=messaging.AndroidNotification(sound="default"),
                 ),
                 apns=messaging.APNSConfig(
                     payload=messaging.APNSPayload(
