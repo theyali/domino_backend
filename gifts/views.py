@@ -1,3 +1,6 @@
+from decimal import Decimal
+
+from django.db import transaction
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from rest_framework.generics import ListAPIView, RetrieveAPIView
@@ -7,8 +10,9 @@ from rest_framework.views import APIView
 
 from restaurants.models import Restaurant
 
-from .models import Gift, InventoryGift
+from .models import Gift, GiftPurchase, InventoryGift
 from .serializers import (
+    GiftPurchaseSerializer,
     GiftSerializer,
     InventoryGiftSerializer,
     PurchaseGiftSerializer,
@@ -49,9 +53,9 @@ class RestaurantGiftListView(ListAPIView):
 class PurchaseGiftView(APIView):
     """Prototype purchase.
 
-    Пока реальная платёжная система не подключена, endpoint просто создаёт
-    giftable-экземпляры. Позже здесь будет создаваться InventoryGift только
-    после подтверждения оплаты.
+    Пока реальная платёжная система не подключена, endpoint создаёт
+    giftable-экземпляры и записывает покупку в историю. После подключения
+    оплаты обе записи должны создаваться только после подтверждения платежа.
     """
 
     permission_classes = [IsAuthenticated]
@@ -72,16 +76,23 @@ class PurchaseGiftView(APIView):
         serializer.is_valid(raise_exception=True)
         quantity = serializer.validated_data["quantity"]
 
-        InventoryGift.objects.bulk_create(
-            [
-                InventoryGift(
-                    owner=request.user,
-                    gift=gift,
-                    is_giftable=True,
-                )
-                for _ in range(quantity)
-            ]
-        )
+        with transaction.atomic():
+            purchase = GiftPurchase.objects.create(
+                purchaser=request.user,
+                gift=gift,
+                quantity=quantity,
+                unit_price=gift.price,
+            )
+            InventoryGift.objects.bulk_create(
+                [
+                    InventoryGift(
+                        owner=request.user,
+                        gift=gift,
+                        is_giftable=True,
+                    )
+                    for _ in range(quantity)
+                ]
+            )
 
         available_count = InventoryGift.objects.filter(
             owner=request.user,
@@ -93,8 +104,71 @@ class PurchaseGiftView(APIView):
         return Response(
             {
                 "gift_id": gift.id,
+                "purchase_id": purchase.id,
                 "added": quantity,
                 "giftable_count": available_count,
+                "total_price": f"{purchase.total_price:.2f}",
+                "purchased_at": purchase.purchased_at.isoformat(),
+            }
+        )
+
+
+class GiftPurchaseSummaryView(APIView):
+    """История расходов и купленные подарки, которые ещё можно подарить."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        purchases = list(
+            GiftPurchase.objects.filter(purchaser=request.user)
+            .select_related("gift", "gift__restaurant")
+            .order_by("-purchased_at", "-id")
+        )
+        total_spent = sum(
+            (purchase.total_price for purchase in purchases),
+            Decimal("0.00"),
+        )
+
+        owned_gifts = list(
+            Gift.objects.filter(
+                inventory_items__owner=request.user,
+                inventory_items__status=InventoryGift.Status.AVAILABLE,
+                inventory_items__is_giftable=True,
+            )
+            .select_related("restaurant")
+            .annotate(
+                giftable_count=Count(
+                    "inventory_items",
+                    filter=Q(
+                        inventory_items__owner=request.user,
+                        inventory_items__status=InventoryGift.Status.AVAILABLE,
+                        inventory_items__is_giftable=True,
+                    ),
+                )
+            )
+            .filter(giftable_count__gt=0)
+            .order_by("restaurant__name", "price", "id")
+        )
+        available_count = sum(
+            int(getattr(gift, "giftable_count", 0) or 0)
+            for gift in owned_gifts
+        )
+
+        serializer_context = {"request": request}
+        return Response(
+            {
+                "total_spent": f"{total_spent:.2f}",
+                "available_count": available_count,
+                "owned_gifts": GiftSerializer(
+                    owned_gifts,
+                    many=True,
+                    context=serializer_context,
+                ).data,
+                "history": GiftPurchaseSerializer(
+                    purchases,
+                    many=True,
+                    context=serializer_context,
+                ).data,
             }
         )
 
