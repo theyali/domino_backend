@@ -13,6 +13,10 @@ class UserProfile(models.Model):
         null=True,
         blank=True,
     )
+    league_points = models.PositiveIntegerField(default=0)
+    games_played = models.PositiveIntegerField(default=0)
+    wins = models.PositiveIntegerField(default=0)
+    losses = models.PositiveIntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
