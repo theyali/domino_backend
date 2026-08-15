@@ -1,13 +1,22 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
+from game.models import GameSession
 from restaurants.models import Restaurant
 from rooms.models import GameRoom, RoomPlayer
 
-from .models import DirectMessage, Friendship, RoomInvitation, UserProfile
+from .models import (
+    DirectMessage,
+    Friendship,
+    RecentPlayerEncounter,
+    RoomInvitation,
+    UserProfile,
+)
 
 
 User = get_user_model()
@@ -44,6 +53,27 @@ class SocialApiTests(APITestCase):
         token = Token.objects.create(user=user)
         self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
 
+    def _room_with_two_players(self):
+        room = GameRoom.objects.create(
+            restaurant=self.restaurant,
+            owner_name="Ali",
+            max_players=2,
+        )
+        ali_player = RoomPlayer.objects.create(
+            room=room,
+            user=self.ali,
+            name="Ali",
+            seat_index=0,
+            is_owner=True,
+        )
+        phone_player = RoomPlayer.objects.create(
+            room=room,
+            user=self.phone,
+            name="Phone",
+            seat_index=1,
+        )
+        return room, ali_player, phone_player
+
     def test_friend_request_can_be_accepted(self):
         response = self.client.post(
             reverse("friend-request"),
@@ -67,24 +97,7 @@ class SocialApiTests(APITestCase):
         self.assertEqual(overview.data["friends"][0]["id"], self.ali.id)
 
     def test_recent_player_can_receive_direct_message(self):
-        room = GameRoom.objects.create(
-            restaurant=self.restaurant,
-            owner_name="Ali",
-            max_players=2,
-        )
-        RoomPlayer.objects.create(
-            room=room,
-            user=self.ali,
-            name="Ali",
-            seat_index=0,
-            is_owner=True,
-        )
-        RoomPlayer.objects.create(
-            room=room,
-            user=self.phone,
-            name="Phone",
-            seat_index=1,
-        )
+        self._room_with_two_players()
 
         response = self.client.post(
             reverse("direct-message-thread", args=[self.phone.id]),
@@ -103,6 +116,63 @@ class SocialApiTests(APITestCase):
         message = DirectMessage.objects.get()
         message.refresh_from_db()
         self.assertIsNotNone(message.read_at)
+
+    def test_recent_player_remains_after_room_is_deleted(self):
+        room, ali_player, _ = self._room_with_two_players()
+        GameSession.objects.create(
+            room=room,
+            current_player=ali_player,
+            opening_player=ali_player,
+            opening_domino_id=1,
+            hands={},
+            boneyard=[],
+            table=[],
+            scores={},
+        )
+
+        self.assertTrue(
+            RecentPlayerEncounter.objects.filter(
+                user=self.ali,
+                other_user=self.phone,
+            ).exists()
+        )
+
+        room.delete()
+
+        overview = self.client.get(reverse("social-overview"))
+        self.assertEqual(overview.status_code, 200)
+        self.assertEqual(len(overview.data["recent_players"]), 1)
+        self.assertEqual(overview.data["recent_players"][0]["id"], self.phone.id)
+
+        response = self.client.post(
+            reverse("direct-message-thread", args=[self.phone.id]),
+            {"body": "После игры"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201)
+
+    def test_recent_players_returns_only_last_ten(self):
+        base_time = timezone.now() - timedelta(minutes=20)
+        opponents = []
+        for index in range(11):
+            opponent = User.objects.create_user(
+                username=f"opponent{index}",
+                password="secret123",
+            )
+            UserProfile.objects.create(user=opponent)
+            opponents.append(opponent)
+            RecentPlayerEncounter.objects.create(
+                user=self.ali,
+                other_user=opponent,
+                last_played_at=base_time + timedelta(minutes=index),
+            )
+
+        overview = self.client.get(reverse("social-overview"))
+        self.assertEqual(overview.status_code, 200)
+        recent = overview.data["recent_players"]
+        self.assertEqual(len(recent), 10)
+        self.assertEqual(recent[0]["id"], opponents[-1].id)
+        self.assertNotIn(opponents[0].id, [item["id"] for item in recent])
 
     def test_online_player_can_be_invited_and_join_locked_room(self):
         room = GameRoom.objects.create(
