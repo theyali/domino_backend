@@ -22,6 +22,14 @@ class UserProfile(models.Model):
     # поэтому отдельное постоянное is_online поле не нужно: online вычисляется
     # по свежести last_seen_at и само протухает, если приложение закрыто.
     last_seen_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    # Push-настройки хранятся на сервере, чтобы они одинаково работали на
+    # нескольких устройствах пользователя.
+    push_notifications_enabled = models.BooleanField(default=True)
+    notify_friend_requests = models.BooleanField(default=True)
+    notify_room_invites = models.BooleanField(default=True)
+    notify_direct_messages = models.BooleanField(default=True)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
@@ -63,6 +71,32 @@ class Friendship(models.Model):
 
     def __str__(self):
         return f"{self.requester_id} → {self.addressee_id} ({self.status})"
+
+
+class BlockedUser(models.Model):
+    blocker = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="blocked_users",
+    )
+    blocked = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="blocked_by_users",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["blocker", "blocked"],
+                name="unique_blocked_user_pair",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.blocker_id} blocked {self.blocked_id}"
 
 
 class RecentPlayerEncounter(models.Model):
@@ -123,6 +157,29 @@ class DirectMessage(models.Model):
 
     def __str__(self):
         return f"DM #{self.pk}: {self.sender_id} → {self.recipient_id}"
+
+
+class PushDevice(models.Model):
+    class Platform(models.TextChoices):
+        IOS = "ios", "iOS"
+        ANDROID = "android", "Android"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="push_devices",
+    )
+    registration_token = models.CharField(max_length=512, unique=True)
+    platform = models.CharField(max_length=16, choices=Platform.choices)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-last_seen_at", "-id"]
+
+    def __str__(self):
+        return f"PushDevice #{self.pk} — {self.user_id} ({self.platform})"
 
 
 class RoomInvitation(models.Model):
