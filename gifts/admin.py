@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from .models import Gift, InventoryGift
+from .models import Gift, GiftPurchase, InventoryGift
 
 
 @admin.register(Gift)
@@ -30,6 +30,32 @@ class GiftAdmin(admin.ModelAdmin):
             'object-fit: contain; border-radius: 12px;" />',
             obj.image.url,
         )
+
+
+@admin.register(GiftPurchase)
+class GiftPurchaseAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "purchaser",
+        "gift",
+        "quantity",
+        "unit_price",
+        "purchase_total",
+        "purchased_at",
+    )
+    list_filter = ("gift__restaurant", "purchased_at")
+    search_fields = (
+        "purchaser__username",
+        "purchaser__email",
+        "gift__name",
+        "gift__restaurant__name",
+    )
+    autocomplete_fields = ("purchaser", "gift")
+    readonly_fields = ("purchased_at",)
+
+    @admin.display(description="Итого")
+    def purchase_total(self, obj):
+        return obj.total_price
 
 
 @admin.register(InventoryGift)
