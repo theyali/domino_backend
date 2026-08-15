@@ -10,16 +10,21 @@ User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
     avatar_url = serializers.SerializerMethodField()
+    gender = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ("id", "username", "email", "first_name", "avatar_url")
+        fields = ("id", "username", "email", "first_name", "avatar_url", "gender")
 
     def get_avatar_url(self, obj):
         profile = getattr(obj, "profile", None)
         if profile is None or not profile.avatar:
             return None
         return profile.avatar.url
+
+    def get_gender(self, obj):
+        profile = getattr(obj, "profile", None)
+        return profile.gender if profile is not None else ""
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
@@ -28,10 +33,15 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         allow_null=True,
         write_only=True,
     )
+    gender = serializers.ChoiceField(
+        choices=UserProfile.Gender.choices,
+        required=True,
+        write_only=True,
+    )
 
     class Meta:
         model = User
-        fields = ("username", "email", "first_name", "avatar")
+        fields = ("username", "email", "first_name", "avatar", "gender")
         extra_kwargs = {
             "username": {"required": True},
             "email": {"required": True},
@@ -78,18 +88,22 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         avatar_was_provided = "avatar" in validated_data
         avatar = validated_data.pop("avatar", None)
+        gender = validated_data.pop("gender")
 
         instance.username = validated_data.get("username", instance.username)
         instance.email = validated_data.get("email", instance.email)
         instance.first_name = validated_data.get("first_name", instance.first_name)
         instance.save(update_fields=["username", "email", "first_name"])
 
+        profile, _ = UserProfile.objects.get_or_create(user=instance)
+        profile.gender = gender
+
         if avatar_was_provided:
-            profile, _ = UserProfile.objects.get_or_create(user=instance)
             if profile.avatar:
                 profile.avatar.delete(save=False)
             profile.avatar = avatar
-            profile.save()
+
+        profile.save()
 
         display_name = (instance.get_full_name() or instance.username).strip()[:40]
         active_players = RoomPlayer.objects.filter(
@@ -111,6 +125,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 class RegisterSerializer(serializers.Serializer):
     username = serializers.CharField(max_length=150)
     email = serializers.EmailField()
+    gender = serializers.ChoiceField(choices=UserProfile.Gender.choices)
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True, min_length=8)
 
@@ -138,6 +153,7 @@ class RegisterSerializer(serializers.Serializer):
     def create(self, validated_data):
         validated_data.pop("password_confirm")
         password = validated_data.pop("password")
+        gender = validated_data.pop("gender")
         username = validated_data["username"]
         user = User(
             username=username,
@@ -146,7 +162,9 @@ class RegisterSerializer(serializers.Serializer):
         )
         user.set_password(password)
         user.save()
-        UserProfile.objects.get_or_create(user=user)
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        profile.gender = gender
+        profile.save(update_fields=["gender", "updated_at"])
         return user
 
 
