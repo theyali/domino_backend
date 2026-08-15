@@ -35,7 +35,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     )
     gender = serializers.ChoiceField(
         choices=UserProfile.Gender.choices,
-        required=True,
+        required=False,
         write_only=True,
     )
 
@@ -88,7 +88,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         avatar_was_provided = "avatar" in validated_data
         avatar = validated_data.pop("avatar", None)
-        gender = validated_data.pop("gender")
+        gender = validated_data.pop("gender", None)
 
         instance.username = validated_data.get("username", instance.username)
         instance.email = validated_data.get("email", instance.email)
@@ -96,7 +96,8 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         instance.save(update_fields=["username", "email", "first_name"])
 
         profile, _ = UserProfile.objects.get_or_create(user=instance)
-        profile.gender = gender
+        if gender is not None:
+            profile.gender = gender
 
         if avatar_was_provided:
             if profile.avatar:
