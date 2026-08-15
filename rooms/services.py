@@ -56,11 +56,16 @@ def create_room(
     restaurant,
     user,
     max_players,
+    game_mode=GameRoom.GameMode.CLASSIC_101,
+    target_score=101,
     password="",
     name="",
 ):
     if not restaurant.is_active:
         raise ValidationError({"restaurant": "Этот ресторан сейчас неактивен."})
+
+    if game_mode == GameRoom.GameMode.CLASSIC_101 and max_players != 2:
+        raise ValidationError({"max_players": "Для правила 101 нужен стол на 2 игроков."})
 
     player_name = _player_name_for_user(user)
 
@@ -68,6 +73,8 @@ def create_room(
         restaurant=restaurant,
         owner_name=player_name,
         max_players=max_players,
+        game_mode=game_mode,
+        target_score=101 if game_mode == GameRoom.GameMode.CLASSIC_101 else target_score,
         name=(name or "").strip(),
     )
     room.set_password(password)
