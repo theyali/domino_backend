@@ -17,13 +17,20 @@ class GameRoomAdmin(admin.ModelAdmin):
         "restaurant",
         "display_name",
         "owner_name",
+        "game_mode",
+        "target_score",
         "status",
         "max_players",
         "current_players",
         "has_password",
         "created_at",
     )
-    list_filter = ("status", "restaurant", "max_players")
+    list_filter = (
+        "game_mode",
+        "status",
+        "restaurant",
+        "max_players",
+    )
     search_fields = ("name", "owner_name", "restaurant__name")
     inlines = (RoomPlayerInline,)
 
