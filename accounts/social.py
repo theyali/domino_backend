@@ -7,6 +7,7 @@ from django.utils import timezone
 from rooms.models import GameRoom, RoomPlayer
 
 from .models import (
+    BlockedUser,
     DirectMessage,
     Friendship,
     RecentPlayerEncounter,
@@ -46,6 +47,28 @@ def _friendship_between(user, other_user):
     )
 
 
+def block_state(user, other_user):
+    rows = BlockedUser.objects.filter(
+        Q(blocker=user, blocked=other_user)
+        | Q(blocker=other_user, blocked=user)
+    ).values_list("blocker_id", "blocked_id")
+    blocked = False
+    blocked_by_user = False
+    for blocker_id, blocked_id in rows:
+        if blocker_id == user.id and blocked_id == other_user.id:
+            blocked = True
+        elif blocker_id == other_user.id and blocked_id == user.id:
+            blocked_by_user = True
+    return blocked, blocked_by_user
+
+
+def is_blocked_between(user, other_user):
+    return BlockedUser.objects.filter(
+        Q(blocker=user, blocked=other_user)
+        | Q(blocker=other_user, blocked=user)
+    ).exists()
+
+
 def friendship_state(user, other_user, friendship=None):
     friendship = friendship or _friendship_between(user, other_user)
     if friendship is None:
@@ -62,6 +85,7 @@ def public_user_payload(user, viewer, *, friendship=None, last_played_at=None):
     last_seen_at = getattr(profile, "last_seen_at", None)
     is_online = bool(last_seen_at and last_seen_at >= online_cutoff())
     relationship, friendship_id = friendship_state(viewer, user, friendship)
+    blocked, blocked_by_user = block_state(viewer, user)
     full_name = (user.get_full_name() or "").strip()
 
     return {
@@ -74,6 +98,8 @@ def public_user_payload(user, viewer, *, friendship=None, last_played_at=None):
         "friendship_status": relationship,
         "friendship_id": friendship_id,
         "last_played_at": last_played_at.isoformat() if last_played_at else None,
+        "is_blocked": blocked,
+        "blocked_by_user": blocked_by_user,
     }
 
 
@@ -128,8 +154,15 @@ def record_recent_players(players):
 
 
 def recent_players_for(user, *, limit=10):
+    blocked_ids = set(
+        BlockedUser.objects.filter(blocker=user).values_list("blocked_id", flat=True)
+    )
+    blocked_ids.update(
+        BlockedUser.objects.filter(blocked=user).values_list("blocker_id", flat=True)
+    )
     encounters = (
         RecentPlayerEncounter.objects.filter(user=user)
+        .exclude(other_user_id__in=blocked_ids)
         .select_related("other_user", "other_user__profile")
         .order_by("-last_played_at", "-id")[:limit]
     )
@@ -144,7 +177,7 @@ def recent_players_for(user, *, limit=10):
 
 
 def can_message(user, other_user):
-    if user.id == other_user.id:
+    if user.id == other_user.id or is_blocked_between(user, other_user):
         return False
 
     friendship = _friendship_between(user, other_user)
@@ -165,6 +198,28 @@ def can_message(user, other_user):
     ).exists()
 
 
+def search_users_for(user, query, *, limit=20):
+    query = (query or "").strip().lstrip("@")
+    if len(query) < 2:
+        return []
+
+    blocked_ids = set(
+        BlockedUser.objects.filter(blocker=user).values_list("blocked_id", flat=True)
+    )
+    blocked_ids.update(
+        BlockedUser.objects.filter(blocked=user).values_list("blocker_id", flat=True)
+    )
+
+    users = (
+        User.objects.filter(username__icontains=query, is_active=True)
+        .exclude(pk=user.pk)
+        .exclude(pk__in=blocked_ids)
+        .select_related("profile")
+        .order_by("username")[:limit]
+    )
+    return [public_user_payload(item, user) for item in users]
+
+
 def social_overview(user):
     touch_presence(user)
 
@@ -183,6 +238,8 @@ def social_overview(user):
     incoming_requests = []
     for friendship in friendships:
         other = friendship.addressee if friendship.requester_id == user.id else friendship.requester
+        if is_blocked_between(user, other):
+            continue
         if friendship.status == Friendship.Status.ACCEPTED:
             friends.append(public_user_payload(other, user, friendship=friendship))
         elif friendship.addressee_id == user.id:
@@ -194,12 +251,21 @@ def social_overview(user):
                 }
             )
 
+    blocked_sender_ids = set(
+        BlockedUser.objects.filter(blocked=user).values_list("blocker_id", flat=True)
+    )
+    blocked_recipient_ids = set(
+        BlockedUser.objects.filter(blocker=user).values_list("blocked_id", flat=True)
+    )
+    blocked_partner_ids = blocked_sender_ids | blocked_recipient_ids
+
     unread_counts = {
         row["sender_id"]: row["count"]
         for row in DirectMessage.objects.filter(
             recipient=user,
             read_at__isnull=True,
         )
+        .exclude(sender_id__in=blocked_partner_ids)
         .values("sender_id")
         .annotate(count=Count("id"))
     }
@@ -218,7 +284,7 @@ def social_overview(user):
     )
     for message in messages:
         partner = message.recipient if message.sender_id == user.id else message.sender
-        if partner.id in seen_partners:
+        if partner.id in seen_partners or partner.id in blocked_partner_ids:
             continue
         seen_partners.add(partner.id)
         conversations.append(
@@ -239,6 +305,7 @@ def social_overview(user):
             status=RoomInvitation.Status.PENDING,
             room__status=GameRoom.Status.WAITING,
         )
+        .exclude(sender_id__in=blocked_partner_ids)
         .select_related(
             "sender",
             "sender__profile",
@@ -259,12 +326,20 @@ def social_overview(user):
 
 def online_users_for(user, *, room_id=None, limit=100):
     touch_presence(user)
+    blocked_ids = set(
+        BlockedUser.objects.filter(blocker=user).values_list("blocked_id", flat=True)
+    )
+    blocked_ids.update(
+        BlockedUser.objects.filter(blocked=user).values_list("blocker_id", flat=True)
+    )
+
     queryset = (
         User.objects.filter(
             profile__last_seen_at__gte=online_cutoff(),
             is_active=True,
         )
         .exclude(pk=user.pk)
+        .exclude(pk__in=blocked_ids)
         .select_related("profile")
         .order_by("-profile__last_seen_at", "username")
     )
