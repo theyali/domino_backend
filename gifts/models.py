@@ -2,6 +2,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from restaurants.models import Restaurant
 
@@ -33,6 +34,41 @@ class Gift(models.Model):
 
     def __str__(self):
         return f"{self.name} — {self.restaurant.name}"
+
+
+class GiftPurchase(models.Model):
+    """История покупок подарков пользователем.
+
+    Цена хранится снимком на момент покупки, поэтому изменение цены Gift
+    позже не переписывает историю расходов пользователя.
+    """
+
+    purchaser = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="gift_purchases",
+    )
+    gift = models.ForeignKey(
+        Gift,
+        on_delete=models.PROTECT,
+        related_name="purchases",
+    )
+    quantity = models.PositiveSmallIntegerField(default=1)
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    purchased_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-purchased_at", "-id"]
+
+    @property
+    def total_price(self):
+        return self.unit_price * self.quantity
+
+    def __str__(self):
+        return (
+            f"{self.purchaser.username}: {self.gift.name} "
+            f"× {self.quantity}"
+        )
 
 
 class InventoryGift(models.Model):
