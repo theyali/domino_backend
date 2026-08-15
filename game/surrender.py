@@ -48,6 +48,7 @@ def surrender_game(*, room_id, player_id):
         "winner_player_ids": winner_ids,
         "hand_points": {str(key): value for key, value in hand_points.items()},
         "added_penalties": {str(player.pk): 0 for player in players},
+        "added_points": {str(player.pk): 0 for player in players},
         "total_scores": scores,
         "match_loser_player_ids": [player_id],
         "match_winner_player_ids": winner_ids,
@@ -81,11 +82,4 @@ def surrender_game(*, room_id, player_id):
 
 
 def _hand_points(hand):
-    if (
-        len(hand) == 1
-        and hand[0]["left"] == 0
-        and hand[0]["right"] == 0
-    ):
-        return 25
-
     return sum(item["left"] + item["right"] for item in hand)
