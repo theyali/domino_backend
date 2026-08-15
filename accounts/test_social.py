@@ -11,8 +11,10 @@ from restaurants.models import Restaurant
 from rooms.models import GameRoom, RoomPlayer
 
 from .models import (
+    BlockedUser,
     DirectMessage,
     Friendship,
+    PushDevice,
     RecentPlayerEncounter,
     RoomInvitation,
     UserProfile,
@@ -95,6 +97,96 @@ class SocialApiTests(APITestCase):
         overview = self.client.get(reverse("social-overview"))
         self.assertEqual(overview.status_code, 200)
         self.assertEqual(overview.data["friends"][0]["id"], self.ali.id)
+
+    def test_search_users_by_login(self):
+        response = self.client.get(reverse("social-user-search"), {"q": "pho"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.data], [self.phone.id])
+
+        own = self.client.get(reverse("social-user-search"), {"q": "ali"})
+        self.assertEqual(own.status_code, 200)
+        self.assertNotIn(self.ali.id, [item["id"] for item in own.data])
+
+    def test_blocking_user_removes_friendship_and_hides_social_access(self):
+        friendship = Friendship.objects.create(
+            requester=self.ali,
+            addressee=self.phone,
+            status=Friendship.Status.ACCEPTED,
+            accepted_at=timezone.now(),
+        )
+        RecentPlayerEncounter.objects.create(user=self.ali, other_user=self.phone)
+        RecentPlayerEncounter.objects.create(user=self.phone, other_user=self.ali)
+
+        response = self.client.post(reverse("social-block-user", args=[self.phone.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            BlockedUser.objects.filter(blocker=self.ali, blocked=self.phone).exists()
+        )
+        self.assertFalse(Friendship.objects.filter(pk=friendship.pk).exists())
+
+        overview = self.client.get(reverse("social-overview"))
+        self.assertEqual(overview.status_code, 200)
+        self.assertEqual(overview.data["friends"], [])
+        self.assertEqual(overview.data["recent_players"], [])
+
+        message = self.client.post(
+            reverse("direct-message-thread", args=[self.phone.id]),
+            {"body": "blocked"},
+            format="json",
+        )
+        self.assertEqual(message.status_code, 403)
+
+        blocked = self.client.get(reverse("social-blocked"))
+        self.assertEqual(blocked.status_code, 200)
+        self.assertEqual(blocked.data[0]["id"], self.phone.id)
+
+        unblock = self.client.post(reverse("social-unblock-user", args=[self.phone.id]))
+        self.assertEqual(unblock.status_code, 204)
+        self.assertFalse(
+            BlockedUser.objects.filter(blocker=self.ali, blocked=self.phone).exists()
+        )
+
+    def test_notification_settings_and_push_device_registration(self):
+        response = self.client.patch(
+            reverse("social-notification-settings"),
+            {
+                "push_notifications_enabled": True,
+                "notify_friend_requests": False,
+                "notify_room_invites": True,
+                "notify_direct_messages": False,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["notify_friend_requests"])
+        self.assertFalse(response.data["notify_direct_messages"])
+
+        device = self.client.post(
+            reverse("social-push-devices"),
+            {
+                "registration_token": "test-device-token",
+                "platform": "ios",
+            },
+            format="json",
+        )
+        self.assertEqual(device.status_code, 200)
+        self.assertTrue(
+            PushDevice.objects.filter(
+                user=self.ali,
+                registration_token="test-device-token",
+                is_active=True,
+            ).exists()
+        )
+
+        remove = self.client.delete(
+            reverse("social-push-devices"),
+            {"registration_token": "test-device-token"},
+            format="json",
+        )
+        self.assertEqual(remove.status_code, 204)
+        self.assertFalse(
+            PushDevice.objects.get(registration_token="test-device-token").is_active
+        )
 
     def test_recent_player_can_receive_direct_message(self):
         self._room_with_two_players()
