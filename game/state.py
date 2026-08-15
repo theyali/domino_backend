@@ -3,6 +3,7 @@ from django.utils import timezone
 from rooms.models import GameRoom
 
 from .engine import phone_open_end_sum, phone_open_ends
+from .models import GameSession
 
 
 def _serialize_active_gift(player):
@@ -47,6 +48,19 @@ def serialize_game_state_for_player(session, player_id):
 
     phone_ends = phone_open_ends(table) if is_phone and table else {}
 
+    # Во время активной партии чужие руки являются закрытой информацией.
+    # После завершения раунда/матча раскрываем финальный snapshot, чтобы клиент
+    # мог наглядно показать, какие костяшки остались у каждого игрока.
+    revealed_hands = {}
+    if session.status != GameSession.Status.ACTIVE:
+        revealed_hands = {
+            str(player.id): _dominoes_with_mode(
+                hands.get(str(player.id), []),
+                room.game_mode,
+            )
+            for player in players
+        }
+
     return {
         "game_id": session.pk,
         "room_id": room.pk,
@@ -76,6 +90,7 @@ def serialize_game_state_for_player(session, player_id):
         "phone_open_sum": phone_open_end_sum(table) if phone_ends else 0,
         "my_player_id": player_id,
         "my_hand": _dominoes_with_mode(my_hand, room.game_mode),
+        "revealed_hands": revealed_hands,
         "round_result": session.last_round_result or None,
         "players": [
             {
