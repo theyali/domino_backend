@@ -86,7 +86,7 @@ def create_room(
 
 
 @transaction.atomic
-def join_room(*, room_id, user, password=""):
+def join_room(*, room_id, user, password="", bypass_password=False):
     room = (
         GameRoom.objects.select_for_update()
         .select_related("restaurant")
@@ -96,7 +96,9 @@ def join_room(*, room_id, user, password=""):
     if room.status != GameRoom.Status.WAITING:
         raise ValidationError({"room": "Игра в этой комнате уже началась."})
 
-    if not room.check_room_password(password):
+    # bypass_password используется только сервером после принятия валидного
+    # приглашения. Обычный HTTP join никогда не получает этот флаг от клиента.
+    if not bypass_password and not room.check_room_password(password):
         raise ValidationError({"password": "Неверный пароль комнаты."})
 
     player_name = _player_name_for_user(user)
