@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import UserProfile
+from .models import DirectMessage, Friendship, RoomInvitation, UserProfile
 
 
 @admin.register(UserProfile)
@@ -12,6 +12,7 @@ class UserProfileAdmin(admin.ModelAdmin):
         "games_played",
         "wins",
         "losses",
+        "last_seen_at",
         "has_avatar",
     )
     search_fields = ("user__username", "user__email", "user__first_name")
@@ -20,3 +21,42 @@ class UserProfileAdmin(admin.ModelAdmin):
     @admin.display(boolean=True, description="Аватар")
     def has_avatar(self, obj):
         return bool(obj.avatar)
+
+
+@admin.register(Friendship)
+class FriendshipAdmin(admin.ModelAdmin):
+    list_display = ("id", "requester", "addressee", "status", "created_at", "accepted_at")
+    list_filter = ("status",)
+    search_fields = (
+        "requester__username",
+        "requester__email",
+        "addressee__username",
+        "addressee__email",
+    )
+    autocomplete_fields = ("requester", "addressee")
+
+
+@admin.register(DirectMessage)
+class DirectMessageAdmin(admin.ModelAdmin):
+    list_display = ("id", "sender", "recipient", "short_body", "created_at", "read_at")
+    search_fields = ("sender__username", "recipient__username", "body")
+    autocomplete_fields = ("sender", "recipient")
+    readonly_fields = ("created_at", "read_at")
+
+    @admin.display(description="Сообщение")
+    def short_body(self, obj):
+        return obj.body[:80]
+
+
+@admin.register(RoomInvitation)
+class RoomInvitationAdmin(admin.ModelAdmin):
+    list_display = ("id", "room", "sender", "recipient", "status", "created_at", "responded_at")
+    list_filter = ("status", "room__restaurant")
+    search_fields = (
+        "room__name",
+        "room__restaurant__name",
+        "sender__username",
+        "recipient__username",
+    )
+    autocomplete_fields = ("room", "sender", "recipient")
+    readonly_fields = ("created_at", "responded_at")
