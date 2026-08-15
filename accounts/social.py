@@ -93,6 +93,7 @@ def public_user_payload(user, viewer, *, friendship=None, last_played_at=None):
         "username": user.username,
         "display_name": full_name or user.username,
         "avatar_url": profile.avatar.url if profile and profile.avatar else None,
+        "gender": profile.gender if profile else "",
         "is_online": is_online,
         "last_seen_at": last_seen_at.isoformat() if last_seen_at else None,
         "friendship_status": relationship,
