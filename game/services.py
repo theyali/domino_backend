@@ -1,6 +1,7 @@
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
+from accounts.ranking import record_match_statistics
 from rooms.models import GameRoom, RoomPlayer
 from rooms.realtime import broadcast_game_started, broadcast_game_state_updated
 
@@ -398,6 +399,13 @@ def finish_game_on_player_exit(*, room_id, player_id):
         ]
     )
 
+    record_match_statistics(
+        session=session,
+        players=players,
+        winner_player_ids=active_winners,
+        loser_player_ids=[player_id],
+    )
+
     room.status = GameRoom.Status.FINISHED
     room.save(update_fields=["status"])
 
@@ -462,6 +470,12 @@ def _finish_round(
     if match_loser_ids:
         session.room.status = GameRoom.Status.FINISHED
         session.room.save(update_fields=["status"])
+        record_match_statistics(
+            session=session,
+            players=players,
+            winner_player_ids=match_winner_ids,
+            loser_player_ids=match_loser_ids,
+        )
 
 
 def _all_hand_points(*, players, hands):
