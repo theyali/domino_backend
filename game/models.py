@@ -22,6 +22,7 @@ class GameSession(models.Model):
     round_number = models.PositiveSmallIntegerField(default=1)
     version = models.PositiveIntegerField(default=1)
     consecutive_passes = models.PositiveSmallIntegerField(default=0)
+    stats_recorded = models.BooleanField(default=False)
 
     current_player = models.ForeignKey(
         RoomPlayer,
