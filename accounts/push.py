@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 
@@ -8,8 +9,36 @@ from .models import PushDevice, UserProfile
 logger = logging.getLogger(__name__)
 
 
+def _firebase_credential():
+    """Возвращает credential из env, не требуя хранить service account в Git."""
+    try:
+        from firebase_admin import credentials
+    except ImportError:
+        return None
+
+    raw_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
+    if raw_json:
+        try:
+            return credentials.Certificate(json.loads(raw_json))
+        except Exception:
+            logger.exception("FIREBASE_SERVICE_ACCOUNT_JSON contains invalid JSON.")
+            return None
+
+    explicit_file = os.getenv("FIREBASE_SERVICE_ACCOUNT_FILE", "").strip()
+    if explicit_file:
+        try:
+            return credentials.Certificate(explicit_file)
+        except Exception:
+            logger.exception("Could not load FIREBASE_SERVICE_ACCOUNT_FILE.")
+            return None
+
+    # Без явного credential Firebase Admin сам использует
+    # GOOGLE_APPLICATION_CREDENTIALS / Application Default Credentials.
+    return None
+
+
 def _firebase_messaging():
-    """Ленивая инициализация Firebase: локальная разработка не должна падать без ключей."""
+    """Ленивая инициализация Firebase: локальная разработка не падает без ключей."""
     try:
         import firebase_admin
         from firebase_admin import messaging
@@ -21,10 +50,16 @@ def _firebase_messaging():
     except ValueError:
         project_id = os.getenv("FIREBASE_PROJECT_ID", "").strip()
         options = {"projectId": project_id} if project_id else None
+        credential = _firebase_credential()
         try:
-            firebase_admin.initialize_app(options=options)
+            firebase_admin.initialize_app(
+                credential=credential,
+                options=options,
+            )
         except Exception:
-            logger.exception("Firebase Admin is not configured; push notifications are disabled.")
+            logger.exception(
+                "Firebase Admin is not configured; background push notifications are disabled."
+            )
             return None
 
     return messaging
@@ -75,6 +110,7 @@ def send_social_push(*, user, kind, title, body, data=None):
                     notification=messaging.AndroidNotification(sound="default"),
                 ),
                 apns=messaging.APNSConfig(
+                    headers={"apns-priority": "10"},
                     payload=messaging.APNSPayload(
                         aps=messaging.Aps(sound="default", badge=1),
                     ),
