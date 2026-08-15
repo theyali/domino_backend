@@ -1,8 +1,10 @@
 from django.contrib import admin
 
 from .models import (
+    BlockedUser,
     DirectMessage,
     Friendship,
+    PushDevice,
     RecentPlayerEncounter,
     RoomInvitation,
     UserProfile,
@@ -18,8 +20,15 @@ class UserProfileAdmin(admin.ModelAdmin):
         "games_played",
         "wins",
         "losses",
+        "push_notifications_enabled",
         "last_seen_at",
         "has_avatar",
+    )
+    list_filter = (
+        "push_notifications_enabled",
+        "notify_friend_requests",
+        "notify_room_invites",
+        "notify_direct_messages",
     )
     search_fields = ("user__username", "user__email", "user__first_name")
     ordering = ("-league_points", "user__username")
@@ -40,6 +49,14 @@ class FriendshipAdmin(admin.ModelAdmin):
         "addressee__email",
     )
     autocomplete_fields = ("requester", "addressee")
+
+
+@admin.register(BlockedUser)
+class BlockedUserAdmin(admin.ModelAdmin):
+    list_display = ("id", "blocker", "blocked", "created_at")
+    search_fields = ("blocker__username", "blocked__username")
+    autocomplete_fields = ("blocker", "blocked")
+    ordering = ("-created_at",)
 
 
 @admin.register(RecentPlayerEncounter)
@@ -65,6 +82,14 @@ class DirectMessageAdmin(admin.ModelAdmin):
     @admin.display(description="Сообщение")
     def short_body(self, obj):
         return obj.body[:80]
+
+
+@admin.register(PushDevice)
+class PushDeviceAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "platform", "is_active", "last_seen_at")
+    list_filter = ("platform", "is_active")
+    search_fields = ("user__username", "registration_token")
+    readonly_fields = ("created_at", "last_seen_at")
 
 
 @admin.register(RoomInvitation)
