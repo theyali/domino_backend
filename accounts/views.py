@@ -15,12 +15,23 @@ from rooms.models import GameRoom, RoomPlayer
 from rooms.serializers import GameRoomSerializer, RoomPlayerSerializer
 from rooms.services import join_room
 
-from .models import DirectMessage, Friendship, RoomInvitation, UserProfile
+from .models import (
+    BlockedUser,
+    DirectMessage,
+    Friendship,
+    PushDevice,
+    RoomInvitation,
+    UserProfile,
+)
+from .push import send_social_push
 from .ranking import build_statistics_payload
 from .serializers import (
     DirectMessageCreateSerializer,
     FriendRequestCreateSerializer,
     LoginSerializer,
+    NotificationPreferencesSerializer,
+    PushDeviceDeleteSerializer,
+    PushDeviceSerializer,
     RegisterSerializer,
     RoomInvitationCreateSerializer,
     UserSerializer,
@@ -28,10 +39,12 @@ from .serializers import (
 )
 from .social import (
     can_message,
+    is_blocked_between,
     message_payload,
     online_cutoff,
     online_users_for,
     public_user_payload,
+    search_users_for,
     social_overview,
     touch_presence,
 )
@@ -108,6 +121,7 @@ class LogoutView(APIView):
 
     def post(self, request):
         UserProfile.objects.filter(user=request.user).update(last_seen_at=None)
+        PushDevice.objects.filter(user=request.user).update(is_active=False)
         Token.objects.filter(user=request.user).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -140,6 +154,131 @@ class SocialOnlineUsersView(APIView):
         return Response(online_users_for(request.user, room_id=room_id))
 
 
+class SocialUserSearchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        touch_presence(request.user)
+        return Response(search_users_for(request.user, request.query_params.get("q", "")))
+
+
+class SocialBlockedUsersView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        touch_presence(request.user)
+        rows = (
+            BlockedUser.objects.filter(blocker=request.user)
+            .select_related("blocked", "blocked__profile")
+            .order_by("-created_at", "-id")
+        )
+        return Response(
+            [public_user_payload(row.blocked, request.user) for row in rows]
+        )
+
+
+class SocialBlockUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, user_id):
+        touch_presence(request.user)
+        other = get_object_or_404(
+            User.objects.select_related("profile"),
+            pk=user_id,
+            is_active=True,
+        )
+        if other.pk == request.user.pk:
+            return Response(
+                {"detail": "Нельзя заблокировать самого себя."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        BlockedUser.objects.get_or_create(blocker=request.user, blocked=other)
+        Friendship.objects.filter(
+            Q(requester=request.user, addressee=other)
+            | Q(requester=other, addressee=request.user)
+        ).delete()
+        RoomInvitation.objects.filter(
+            Q(sender=request.user, recipient=other)
+            | Q(sender=other, recipient=request.user),
+            status=RoomInvitation.Status.PENDING,
+        ).delete()
+
+        return Response(public_user_payload(other, request.user))
+
+
+class SocialUnblockUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, user_id):
+        touch_presence(request.user)
+        BlockedUser.objects.filter(
+            blocker=request.user,
+            blocked_id=user_id,
+        ).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class NotificationPreferencesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile = touch_presence(request.user)
+        return Response(NotificationPreferencesSerializer(profile).data)
+
+    def patch(self, request):
+        profile = touch_presence(request.user)
+        serializer = NotificationPreferencesSerializer(
+            profile,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class PushDeviceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = PushDeviceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        token = serializer.validated_data["registration_token"]
+        platform = serializer.validated_data["platform"]
+        now = timezone.now()
+
+        # Один FCM registration token может принадлежать только одному
+        # авторизованному аккаунту на устройстве.
+        device, _ = PushDevice.objects.update_or_create(
+            registration_token=token,
+            defaults={
+                "user": request.user,
+                "platform": platform,
+                "is_active": True,
+                "last_seen_at": now,
+            },
+        )
+        return Response(
+            {
+                "id": device.id,
+                "platform": device.platform,
+                "active": device.is_active,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request):
+        serializer = PushDeviceDeleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        PushDevice.objects.filter(
+            user=request.user,
+            registration_token=serializer.validated_data["registration_token"],
+        ).update(is_active=False)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class FriendRequestCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -158,6 +297,11 @@ class FriendRequestCreateView(APIView):
                 {"detail": "Нельзя добавить самого себя в друзья."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if is_blocked_between(request.user, other):
+            return Response(
+                {"detail": "Добавление в друзья недоступно для этого пользователя."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         friendship = (
             Friendship.objects.select_for_update()
@@ -168,6 +312,7 @@ class FriendRequestCreateView(APIView):
             .first()
         )
         now = timezone.now()
+        push_kind = None
 
         if friendship is None:
             friendship = Friendship.objects.create(
@@ -175,15 +320,43 @@ class FriendRequestCreateView(APIView):
                 addressee=other,
             )
             response_status = status.HTTP_201_CREATED
-        elif friendship.status == Friendship.Status.PENDING and friendship.addressee_id == request.user.id:
+            push_kind = "friend_request"
+        elif (
+            friendship.status == Friendship.Status.PENDING
+            and friendship.addressee_id == request.user.id
+        ):
             # Если два человека одновременно хотят добавить друг друга,
             # второй запрос сразу превращает связь в дружбу.
             friendship.status = Friendship.Status.ACCEPTED
             friendship.accepted_at = now
             friendship.save(update_fields=["status", "accepted_at"])
             response_status = status.HTTP_200_OK
+            push_kind = "friend_accepted"
         else:
             response_status = status.HTTP_200_OK
+
+        if push_kind == "friend_request":
+            sender_name = (request.user.get_full_name() or request.user.username).strip()
+            transaction.on_commit(
+                lambda: send_social_push(
+                    user=other,
+                    kind="friend_request",
+                    title="Новая заявка в друзья",
+                    body=f"{sender_name} хочет добавить тебя в друзья.",
+                    data={"user_id": request.user.id},
+                )
+            )
+        elif push_kind == "friend_accepted":
+            accepter_name = (request.user.get_full_name() or request.user.username).strip()
+            transaction.on_commit(
+                lambda: send_social_push(
+                    user=other,
+                    kind="friend_accepted",
+                    title="Теперь вы друзья",
+                    body=f"{accepter_name} принял твою заявку в друзья.",
+                    data={"user_id": request.user.id},
+                )
+            )
 
         return Response(
             public_user_payload(other, request.user, friendship=friendship),
@@ -205,9 +378,28 @@ class FriendRequestAcceptView(APIView):
             addressee=request.user,
             status=Friendship.Status.PENDING,
         )
+        if is_blocked_between(request.user, friendship.requester):
+            return Response(
+                {"detail": "Эта заявка больше недоступна."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         friendship.status = Friendship.Status.ACCEPTED
         friendship.accepted_at = timezone.now()
         friendship.save(update_fields=["status", "accepted_at"])
+
+        accepter_name = (request.user.get_full_name() or request.user.username).strip()
+        requester = friendship.requester
+        transaction.on_commit(
+            lambda: send_social_push(
+                user=requester,
+                kind="friend_accepted",
+                title="Теперь вы друзья",
+                body=f"{accepter_name} принял твою заявку в друзья.",
+                data={"user_id": request.user.id},
+            )
+        )
+
         return Response(
             public_user_payload(
                 friendship.requester,
@@ -291,6 +483,18 @@ class DirectMessageThreadView(APIView):
             recipient=other,
             body=serializer.validated_data["body"],
         )
+
+        sender_name = (request.user.get_full_name() or request.user.username).strip()
+        preview = message.body if len(message.body) <= 120 else f"{message.body[:117]}..."
+        transaction.on_commit(
+            lambda: send_social_push(
+                user=other,
+                kind="direct_message",
+                title=sender_name,
+                body=preview,
+                data={"user_id": request.user.id},
+            )
+        )
         return Response(message_payload(message), status=status.HTTP_201_CREATED)
 
 
@@ -334,6 +538,17 @@ class RoomInvitationCreateView(APIView):
                 user__isnull=False,
             ).values_list("user_id", flat=True)
         )
+        blocked_user_ids = set(
+            BlockedUser.objects.filter(blocker=request.user).values_list(
+                "blocked_id", flat=True
+            )
+        )
+        blocked_user_ids.update(
+            BlockedUser.objects.filter(blocked=request.user).values_list(
+                "blocker_id", flat=True
+            )
+        )
+
         recipients = list(
             User.objects.filter(
                 pk__in=requested_ids,
@@ -342,11 +557,13 @@ class RoomInvitationCreateView(APIView):
             )
             .exclude(pk=request.user.pk)
             .exclude(pk__in=occupied_user_ids)
+            .exclude(pk__in=blocked_user_ids)
             .select_related("profile")
         )
 
         now = timezone.now()
         invitation_ids = []
+        sender_name = (request.user.get_full_name() or request.user.username).strip()
         for recipient in recipients:
             invitation, created = RoomInvitation.objects.get_or_create(
                 room=room,
@@ -368,6 +585,21 @@ class RoomInvitationCreateView(APIView):
                 )
             invitation_ids.append(invitation.id)
 
+            invitation_id = invitation.id
+            transaction.on_commit(
+                lambda recipient=recipient, invitation_id=invitation_id: send_social_push(
+                    user=recipient,
+                    kind="room_invitation",
+                    title="Приглашение за стол",
+                    body=f"{sender_name} зовёт тебя в {room.restaurant.name} · {room.display_name}.",
+                    data={
+                        "invitation_id": invitation_id,
+                        "room_id": room.id,
+                        "restaurant_id": room.restaurant_id,
+                    },
+                )
+            )
+
         return Response(
             {
                 "sent": len(invitation_ids),
@@ -385,12 +617,17 @@ class RoomInvitationAcceptView(APIView):
         touch_presence(request.user)
         invitation = get_object_or_404(
             RoomInvitation.objects.select_for_update().select_related(
-                "room", "room__restaurant"
+                "room", "room__restaurant", "sender"
             ),
             pk=pk,
             recipient=request.user,
             status=RoomInvitation.Status.PENDING,
         )
+        if is_blocked_between(request.user, invitation.sender):
+            return Response(
+                {"detail": "Это приглашение больше недоступно."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         room, player = join_room(
             room_id=invitation.room_id,
