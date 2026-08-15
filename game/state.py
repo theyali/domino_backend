@@ -30,6 +30,14 @@ def _avatar_url_for_player(player):
     return profile.avatar.url
 
 
+def _gender_for_player(player):
+    user = player.user
+    if user is None:
+        return ""
+    profile = getattr(user, "profile", None)
+    return profile.gender if profile is not None else ""
+
+
 def _dominoes_with_mode(dominoes, game_mode):
     return [
         {**domino, "game_mode": game_mode}
@@ -98,6 +106,7 @@ def serialize_game_state_for_player(session, player_id):
                 "user_id": player.user_id,
                 "name": player.name,
                 "avatar_url": _avatar_url_for_player(player),
+                "gender": _gender_for_player(player),
                 "seat_index": player.seat_index,
                 "is_owner": player.is_owner,
                 "is_active": player.is_active,
