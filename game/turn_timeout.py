@@ -1,7 +1,9 @@
 from django.db import transaction
 from django.utils import timezone
 
-from .engine import playable_sides
+from rooms.models import GameRoom
+
+from .engine import phone_playable_sides, playable_sides
 from .models import GameSession
 from .services import draw_domino, pass_turn, play_domino
 
@@ -17,7 +19,7 @@ def process_expired_turn(*, room_id):
     try:
         session = (
             GameSession.objects.select_for_update()
-            .select_related("current_player")
+            .select_related("room", "current_player")
             .prefetch_related("room__players")
             .get(room_id=room_id)
         )
@@ -90,14 +92,23 @@ def _first_automatic_move(*, session, hand, table):
                 return domino["id"], "center"
         return None
 
+    phone_mode = session.room.game_mode == GameRoom.GameMode.PHONE
+
     for domino in hand:
-        sides = playable_sides(domino, table)
+        sides = (
+            phone_playable_sides(domino, table)
+            if phone_mode
+            else playable_sides(domino, table)
+        )
         if not sides:
             continue
 
-        # Deterministic rule for the prototype: prefer the left edge when a
-        # domino fits both ends. Django still validates and orients the tile.
-        side = "left" if "left" in sides else "right"
-        return domino["id"], side
+        if phone_mode:
+            for side in ("top", "right", "bottom", "left"):
+                if side in sides:
+                    return domino["id"], side
+        else:
+            side = "left" if "left" in sides else "right"
+            return domino["id"], side
 
     return None
