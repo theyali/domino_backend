@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class UserProfile(models.Model):
@@ -62,6 +63,34 @@ class Friendship(models.Model):
 
     def __str__(self):
         return f"{self.requester_id} → {self.addressee_id} ({self.status})"
+
+
+class RecentPlayerEncounter(models.Model):
+    """Постоянная история людей, с которыми пользователь реально начал матч."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="recent_player_encounters",
+    )
+    other_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="recent_opponent_encounters",
+    )
+    last_played_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["-last_played_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "other_user"],
+                name="unique_recent_player_pair",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} played with {self.other_user_id}"
 
 
 class DirectMessage(models.Model):
