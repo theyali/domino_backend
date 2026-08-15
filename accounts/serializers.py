@@ -146,6 +146,7 @@ class RegisterSerializer(serializers.Serializer):
         )
         user.set_password(password)
         user.save()
+        UserProfile.objects.get_or_create(user=user)
         return user
 
 
