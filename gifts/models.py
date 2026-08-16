@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 from django.conf import settings
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -12,9 +13,17 @@ class Gift(models.Model):
         Restaurant,
         on_delete=models.CASCADE,
         related_name="gifts",
+        null=True,
+        blank=True,
+        help_text="Оставь пустым, чтобы подарок был доступен во всех ресторанах.",
     )
     name = models.CharField(max_length=120)
     price = models.DecimalField(max_digits=10, decimal_places=2)
+    level = models.PositiveSmallIntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        help_text="Уровень ценности подарка: от 1 до 5.",
+    )
     image = models.ImageField(
         upload_to="gifts/",
         blank=True,
@@ -24,16 +33,26 @@ class Gift(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["price", "id"]
+        ordering = ["level", "price", "id"]
         constraints = [
             models.UniqueConstraint(
                 fields=["restaurant", "name"],
                 name="unique_gift_name_per_restaurant",
             ),
+            models.UniqueConstraint(
+                fields=["name"],
+                condition=models.Q(restaurant__isnull=True),
+                name="unique_global_gift_name",
+            ),
         ]
 
+    @property
+    def is_global(self):
+        return self.restaurant_id is None
+
     def __str__(self):
-        return f"{self.name} — {self.restaurant.name}"
+        scope = self.restaurant.name if self.restaurant_id else "Все рестораны"
+        return f"{self.name} — {scope} — ур. {self.level}"
 
 
 class GiftPurchase(models.Model):
