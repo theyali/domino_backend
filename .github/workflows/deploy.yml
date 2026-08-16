@@ -155,8 +155,8 @@ jobs:
             sleep 2
           done
 
-          docker compose exec -T web python manage.py check
-          docker compose exec -T web python manage.py makemigrations --check --dry-run
+          docker compose exec -T web python manage.py check </dev/null
+          docker compose exec -T web python manage.py makemigrations --check --dry-run </dev/null
 
           echo "Checking global gift purchase/send flow..."
           docker compose exec -T web python manage.py shell <<'PY'
