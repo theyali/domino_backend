@@ -14,7 +14,9 @@ def _serialize_active_gift(player):
     return {
         "id": gift.id,
         "restaurant_id": gift.restaurant_id,
+        "is_global": gift.is_global,
         "name": gift.name,
+        "level": gift.level,
         "image_url": gift.image.url if gift.image else None,
     }
 
