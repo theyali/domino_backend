@@ -1,0 +1,159 @@
+name: One-time social and bot production smoke
+
+on:
+  push:
+    paths:
+      - .github/workflows/one-time-social-bot-smoke.yml
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install sshpass
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+
+      - name: Run production smoke checks
+        env:
+          SSHPASS: ${{ secrets.SERVER_PASSWORD }}
+          SSH_PORT: ${{ secrets.SERVER_PORT || '22' }}
+        run: |
+          set -Eeuo pipefail
+          sshpass -e ssh \
+            -p "$SSH_PORT" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 \
+            root@185.229.225.177 'bash -se' <<'REMOTE'
+          set -Eeuo pipefail
+          cd /opt/domino_backend
+          docker compose exec -T web python manage.py shell <<'PY'
+          from uuid import uuid4
+
+          from django.contrib.auth import get_user_model
+          from rest_framework.test import APIClient
+
+          from accounts.models import Friendship
+          from restaurants.models import Restaurant
+          from rooms.models import GameRoom, RoomPlayer
+          from game.models import GameSession
+
+          suffix = uuid4().hex[:10]
+          User = get_user_model()
+          sender = recipient = restaurant = None
+          created_room_ids = []
+
+          def client_for(user):
+              client = APIClient()
+              client.defaults["HTTP_HOST"] = "127.0.0.1"
+              client.force_authenticate(user=user)
+              return client
+
+          try:
+              sender = User.objects.create_user(username=f"social_smoke_sender_{suffix}")
+              recipient = User.objects.create_user(username=f"social_smoke_recipient_{suffix}")
+              sender_client = client_for(sender)
+              recipient_client = client_for(recipient)
+
+              # Accept: reproduces the PostgreSQL FOR UPDATE path that used to 500.
+              pending = Friendship.objects.create(requester=sender, addressee=recipient)
+              accepted = recipient_client.post(f"/api/social/friends/{pending.id}/accept/")
+              assert accepted.status_code == 200, accepted.content
+              pending.refresh_from_db()
+              assert pending.status == Friendship.Status.ACCEPTED, pending.status
+              pending.delete()
+
+              # Decline incoming request.
+              pending = Friendship.objects.create(requester=sender, addressee=recipient)
+              declined = recipient_client.post(f"/api/social/friends/{pending.id}/decline/")
+              assert declined.status_code == 204, declined.content
+              assert not Friendship.objects.filter(pk=pending.id).exists()
+
+              # Outgoing request appears in overview and can be cancelled by sender.
+              pending = Friendship.objects.create(requester=sender, addressee=recipient)
+              overview = sender_client.get("/api/social/overview/")
+              assert overview.status_code == 200, overview.content
+              outgoing_ids = {item["id"] for item in overview.json()["outgoing_requests"]}
+              assert pending.id in outgoing_ids, overview.content
+              cancelled = sender_client.post(f"/api/social/friends/{pending.id}/cancel/")
+              assert cancelled.status_code == 204, cancelled.content
+              assert not Friendship.objects.filter(pk=pending.id).exists()
+              print("Friend accept/decline/cancel production smoke passed.")
+
+              # Mixed room: host + bots are real RoomPlayer rows, no fake users.
+              restaurant = Restaurant.objects.create(name=f"Bot smoke {suffix}", is_active=True)
+              room_response = sender_client.post(
+                  f"/api/restaurants/{restaurant.id}/rooms/",
+                  {
+                      "max_players": 4,
+                      "game_mode": "phone",
+                      "target_score": 72,
+                      "bot_count": 2,
+                  },
+                  format="json",
+              )
+              assert room_response.status_code == 201, room_response.content
+              room_payload = room_response.json()
+              room_id = room_payload["id"]
+              created_room_ids.append(room_id)
+              assert room_payload["bot_count"] == 2, room_payload
+              assert room_payload["current_players"] == 3, room_payload
+              bots = [player for player in room_payload["players"] if player["is_bot"]]
+              assert len(bots) == 2, room_payload
+              assert all(player["user_id"] is None for player in bots), bots
+              assert all(player["is_online"] for player in bots), bots
+              GameRoom.objects.filter(pk=room_id).delete()
+              created_room_ids.remove(room_id)
+
+              # Host-vs-bot room can start; if bot opens, server performs its turn
+              # immediately using the same authoritative play service as humans.
+              room_response = sender_client.post(
+                  f"/api/restaurants/{restaurant.id}/rooms/",
+                  {
+                      "max_players": 2,
+                      "game_mode": "101",
+                      "target_score": 101,
+                      "bot_count": 1,
+                  },
+                  format="json",
+              )
+              assert room_response.status_code == 201, room_response.content
+              room_payload = room_response.json()
+              room_id = room_payload["id"]
+              created_room_ids.append(room_id)
+              humans = [player for player in room_payload["players"] if not player["is_bot"]]
+              assert len(humans) == 1, room_payload
+              started = sender_client.post(
+                  f"/api/rooms/{room_id}/start/",
+                  {"player_id": humans[0]["id"]},
+                  format="json",
+              )
+              assert started.status_code == 200, started.content
+              state = started.json()
+              state_bots = [player for player in state["players"] if player["is_bot"]]
+              assert len(state_bots) == 1, state
+              session = GameSession.objects.get(room_id=room_id)
+              assert session.status in {
+                  GameSession.Status.ACTIVE,
+                  GameSession.Status.ROUND_FINISHED,
+                  GameSession.Status.FINISHED,
+              }, session.status
+              print("Room bot creation/start production smoke passed.")
+          finally:
+              Friendship.objects.filter(
+                  requester__username__contains=suffix
+              ).delete()
+              Friendship.objects.filter(
+                  addressee__username__contains=suffix
+              ).delete()
+              for room_id in created_room_ids:
+                  GameRoom.objects.filter(pk=room_id).delete()
+              if restaurant is not None:
+                  Restaurant.objects.filter(pk=restaurant.pk).delete()
+              if sender is not None:
+                  User.objects.filter(pk=sender.pk).delete()
+              if recipient is not None:
+                  User.objects.filter(pk=recipient.pk).delete()
+          PY
+          REMOTE
