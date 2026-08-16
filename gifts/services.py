@@ -46,9 +46,14 @@ def send_gift_to_room_players(
     if not recipient_ids:
         raise ValidationError({"recipients": "Выбери хотя бы одного получателя."})
 
+    # Do not select_related("user") on this SELECT ... FOR UPDATE query.
+    # RoomPlayer.user is nullable, so PostgreSQL would produce a LEFT OUTER JOIN
+    # and reject the lock with:
+    # "FOR UPDATE cannot be applied to the nullable side of an outer join".
+    # There are at most four recipients, so loading user objects lazily below is
+    # cheap and, more importantly, keeps the row lock limited to RoomPlayer.
     recipients = list(
         RoomPlayer.objects.select_for_update()
-        .select_related("user")
         .filter(
             room=room,
             id__in=recipient_ids,
