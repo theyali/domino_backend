@@ -206,6 +206,7 @@ jobs:
               )
 
               client = APIClient()
+              client.defaults["HTTP_HOST"] = "127.0.0.1"
               client.force_authenticate(user=sender)
 
               catalog = client.get(f"/api/restaurants/{restaurant.id}/gifts/")
