@@ -69,6 +69,13 @@ jobs:
             ufw allow 80/tcp || true
           fi
 
+          if [ -d /opt/domino_backend/.git ]; then
+            cd /opt/domino_backend
+            echo "===== Existing web logs before deploy ====="
+            docker compose logs --since=45m --tail=1200 web || true
+            echo "===== End existing web logs ====="
+          fi
+
           if [ ! -d /opt/domino_backend/.git ]; then
             rm -rf /opt/domino_backend
             git clone --branch main --depth 1 \
