@@ -36,7 +36,7 @@ jobs:
 
           from accounts.models import Friendship
           from restaurants.models import Restaurant
-          from rooms.models import GameRoom, RoomPlayer
+          from rooms.models import GameRoom
           from game.models import GameSession
 
           suffix = uuid4().hex[:10]
@@ -56,7 +56,6 @@ jobs:
               sender_client = client_for(sender)
               recipient_client = client_for(recipient)
 
-              # Accept: reproduces the PostgreSQL FOR UPDATE path that used to 500.
               pending = Friendship.objects.create(requester=sender, addressee=recipient)
               accepted = recipient_client.post(f"/api/social/friends/{pending.id}/accept/")
               assert accepted.status_code == 200, accepted.content
@@ -64,13 +63,11 @@ jobs:
               assert pending.status == Friendship.Status.ACCEPTED, pending.status
               pending.delete()
 
-              # Decline incoming request.
               pending = Friendship.objects.create(requester=sender, addressee=recipient)
               declined = recipient_client.post(f"/api/social/friends/{pending.id}/decline/")
               assert declined.status_code == 204, declined.content
               assert not Friendship.objects.filter(pk=pending.id).exists()
 
-              # Outgoing request appears in overview and can be cancelled by sender.
               pending = Friendship.objects.create(requester=sender, addressee=recipient)
               overview = sender_client.get("/api/social/overview/")
               assert overview.status_code == 200, overview.content
@@ -81,7 +78,6 @@ jobs:
               assert not Friendship.objects.filter(pk=pending.id).exists()
               print("Friend accept/decline/cancel production smoke passed.")
 
-              # Mixed room: host + bots are real RoomPlayer rows, no fake users.
               restaurant = Restaurant.objects.create(name=f"Bot smoke {suffix}", is_active=True)
               room_response = sender_client.post(
                   f"/api/restaurants/{restaurant.id}/rooms/",
@@ -106,8 +102,6 @@ jobs:
               GameRoom.objects.filter(pk=room_id).delete()
               created_room_ids.remove(room_id)
 
-              # Host-vs-bot room can start; if bot opens, server performs its turn
-              # immediately using the same authoritative play service as humans.
               room_response = sender_client.post(
                   f"/api/restaurants/{restaurant.id}/rooms/",
                   {
@@ -130,7 +124,7 @@ jobs:
                   format="json",
               )
               assert started.status_code == 200, started.content
-              state = started.json()
+              state = started.json()["game"]
               state_bots = [player for player in state["players"] if player["is_bot"]]
               assert len(state_bots) == 1, state
               session = GameSession.objects.get(room_id=room_id)
@@ -141,12 +135,8 @@ jobs:
               }, session.status
               print("Room bot creation/start production smoke passed.")
           finally:
-              Friendship.objects.filter(
-                  requester__username__contains=suffix
-              ).delete()
-              Friendship.objects.filter(
-                  addressee__username__contains=suffix
-              ).delete()
+              Friendship.objects.filter(requester__username__contains=suffix).delete()
+              Friendship.objects.filter(addressee__username__contains=suffix).delete()
               for room_id in created_room_ids:
                   GameRoom.objects.filter(pk=room_id).delete()
               if restaurant is not None:
