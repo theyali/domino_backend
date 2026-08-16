@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -18,11 +19,14 @@ def send_gift_to_room_players(
     gift_id,
     recipient_player_ids,
 ):
-    room = (
-        GameRoom.objects.select_for_update()
-        .select_related("restaurant")
-        .get(pk=room_id)
-    )
+    try:
+        room = (
+            GameRoom.objects.select_for_update()
+            .select_related("restaurant")
+            .get(pk=room_id)
+        )
+    except GameRoom.DoesNotExist as exc:
+        raise ValidationError({"room": "Игровой стол больше не существует."}) from exc
 
     if room.status != GameRoom.Status.PLAYING:
         raise ValidationError({"room": "Подарки можно отправлять во время активной игры."})
@@ -41,9 +45,6 @@ def send_gift_to_room_players(
     recipient_ids = list(dict.fromkeys(int(value) for value in recipient_player_ids))
     if not recipient_ids:
         raise ValidationError({"recipients": "Выбери хотя бы одного получателя."})
-
-    if sender_player.id in recipient_ids:
-        raise ValidationError({"recipients": "Нельзя отправить подарок самому себе."})
 
     recipients = list(
         RoomPlayer.objects.select_for_update()
@@ -65,10 +66,13 @@ def send_gift_to_room_players(
         )
 
     try:
-        gift = Gift.objects.select_for_update().get(
-            pk=gift_id,
-            restaurant=room.restaurant,
-            is_active=True,
+        gift = (
+            Gift.objects.select_for_update()
+            .filter(
+                Q(restaurant=room.restaurant) | Q(restaurant__isnull=True),
+                is_active=True,
+            )
+            .get(pk=gift_id)
         )
     except Gift.DoesNotExist as exc:
         raise ValidationError(
@@ -121,12 +125,18 @@ def send_gift_to_room_players(
     gift_payload = {
         "id": gift.id,
         "restaurant_id": gift.restaurant_id,
+        "is_global": gift.is_global,
         "name": gift.name,
+        "level": gift.level,
         "image_url": gift.image.url if gift.image else None,
     }
 
     recipient_player_ids = [player.id for player in recipients]
 
+    # The database transfer is authoritative. A temporary Redis/Channels publish
+    # failure must not turn an already committed gift transfer into HTTP 500.
+    # Django logs a robust on_commit callback failure while the REST request can
+    # still return the successful authoritative result to Flutter.
     transaction.on_commit(
         lambda: broadcast_gift_sent(
             room_id=room.id,
@@ -134,7 +144,8 @@ def send_gift_to_room_players(
             sender_player_id=sender_player.id,
             recipient_player_ids=recipient_player_ids,
             gift=gift_payload,
-        )
+        ),
+        robust=True,
     )
 
     return {
