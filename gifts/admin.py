@@ -9,16 +9,21 @@ class GiftAdmin(admin.ModelAdmin):
     list_display = (
         "id",
         "name",
-        "restaurant",
+        "gift_scope",
+        "level",
         "price",
         "image_preview",
         "is_active",
         "updated_at",
     )
-    list_filter = ("restaurant", "is_active")
+    list_filter = ("level", "restaurant", "is_active")
     search_fields = ("name", "restaurant__name")
-    ordering = ("restaurant", "price", "id")
+    ordering = ("level", "price", "id")
     readonly_fields = ("image_preview",)
+
+    @admin.display(description="Где доступен", ordering="restaurant__name")
+    def gift_scope(self, obj):
+        return obj.restaurant.name if obj.restaurant_id else "🌍 Все рестораны"
 
     @admin.display(description="Изображение")
     def image_preview(self, obj):
@@ -43,7 +48,7 @@ class GiftPurchaseAdmin(admin.ModelAdmin):
         "purchase_total",
         "purchased_at",
     )
-    list_filter = ("gift__restaurant", "purchased_at")
+    list_filter = ("gift__level", "gift__restaurant", "purchased_at")
     search_fields = (
         "purchaser__username",
         "purchaser__email",
@@ -72,7 +77,7 @@ class InventoryGiftAdmin(admin.ModelAdmin):
         "acquired_at",
         "redeemed_at",
     )
-    list_filter = ("status", "is_giftable", "gift__restaurant")
+    list_filter = ("status", "is_giftable", "gift__level", "gift__restaurant")
     search_fields = (
         "gift__name",
         "gift__restaurant__name",
