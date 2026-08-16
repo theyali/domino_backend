@@ -1,0 +1,270 @@
+name: One-time social fixes and server bots
+
+on:
+  push:
+    paths:
+      - .github/workflows/one-time-social-bots.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch backend
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected 1 match, got {count}: {old[:120]!r}')
+              p.write_text(text.replace(old, new, 1))
+
+          # ------------------------------------------------------------------
+          # Social: outgoing requests + explicit accept/decline/cancel actions.
+          # ------------------------------------------------------------------
+          replace_once(
+              'accounts/social.py',
+              '    friends = []\n    incoming_requests = []\n',
+              '    friends = []\n    incoming_requests = []\n    outgoing_requests = []\n',
+          )
+          replace_once(
+              'accounts/social.py',
+              '''        elif friendship.addressee_id == user.id:\n            incoming_requests.append(\n                {\n                    "id": friendship.id,\n                    "user": public_user_payload(other, user, friendship=friendship),\n                    "created_at": friendship.created_at.isoformat(),\n                }\n            )\n''',
+              '''        elif friendship.addressee_id == user.id:\n            incoming_requests.append(\n                {\n                    "id": friendship.id,\n                    "user": public_user_payload(other, user, friendship=friendship),\n                    "created_at": friendship.created_at.isoformat(),\n                }\n            )\n        else:\n            outgoing_requests.append(\n                {\n                    "id": friendship.id,\n                    "user": public_user_payload(other, user, friendship=friendship),\n                    "created_at": friendship.created_at.isoformat(),\n                }\n            )\n''',
+          )
+          replace_once(
+              'accounts/social.py',
+              '        "incoming_requests": incoming_requests,\n        "recent_players": recent_players_for(user, limit=10),\n',
+              '        "incoming_requests": incoming_requests,\n        "outgoing_requests": outgoing_requests,\n        "recent_players": recent_players_for(user, limit=10),\n',
+          )
+
+          replace_once(
+              'accounts/views.py',
+              '''            Friendship.objects.select_for_update().select_related(\n                "requester", "requester__profile"\n            ),\n''',
+              '''            Friendship.objects.select_for_update().select_related("requester"),\n''',
+          )
+
+          # Push is secondary to authoritative DB state. Do not surface a 500
+          # after a friendship was already committed merely because push failed.
+          views = Path('accounts/views.py')
+          text = views.read_text()
+          text = text.replace(
+              '''                )\n            )\n        elif push_kind == "friend_accepted":''',
+              '''                ),\n                robust=True,\n            )\n        elif push_kind == "friend_accepted":''',
+              1,
+          )
+          text = text.replace(
+              '''                )\n            )\n\n        return Response(\n            public_user_payload(other, request.user, friendship=friendship),''',
+              '''                ),\n                robust=True,\n            )\n\n        return Response(\n            public_user_payload(other, request.user, friendship=friendship),''',
+              1,
+          )
+          text = text.replace(
+              '''                data={"user_id": request.user.id},\n            )\n        )\n\n        return Response(\n            public_user_payload(\n                friendship.requester,''',
+              '''                data={"user_id": request.user.id},\n            ),\n            robust=True,\n        )\n\n        return Response(\n            public_user_payload(\n                friendship.requester,''',
+              1,
+          )
+          views.write_text(text)
+
+          replace_once(
+              'accounts/views.py',
+              '\n\nclass FriendshipRemoveView(APIView):\n',
+              '''\n\nclass FriendRequestDeclineView(APIView):\n    permission_classes = [IsAuthenticated]\n\n    @transaction.atomic\n    def post(self, request, pk):\n        touch_presence(request.user)\n        friendship = get_object_or_404(\n            Friendship.objects.select_for_update(),\n            pk=pk,\n            addressee=request.user,\n            status=Friendship.Status.PENDING,\n        )\n        friendship.delete()\n        return Response(status=status.HTTP_204_NO_CONTENT)\n\n\nclass FriendRequestCancelView(APIView):\n    permission_classes = [IsAuthenticated]\n\n    @transaction.atomic\n    def post(self, request, pk):\n        touch_presence(request.user)\n        friendship = get_object_or_404(\n            Friendship.objects.select_for_update(),\n            pk=pk,\n            requester=request.user,\n            status=Friendship.Status.PENDING,\n        )\n        friendship.delete()\n        return Response(status=status.HTTP_204_NO_CONTENT)\n\n\nclass FriendshipRemoveView(APIView):\n''',
+          )
+
+          replace_once(
+              'accounts/urls.py',
+              '    FriendRequestAcceptView,\n    FriendRequestCreateView,\n',
+              '    FriendRequestAcceptView,\n    FriendRequestCancelView,\n    FriendRequestCreateView,\n    FriendRequestDeclineView,\n',
+          )
+          replace_once(
+              'accounts/urls.py',
+              '    path("social/friends/<int:pk>/accept/", FriendRequestAcceptView.as_view(), name="friend-accept"),\n    path("social/friends/<int:pk>/remove/", FriendshipRemoveView.as_view(), name="friend-remove"),\n',
+              '    path("social/friends/<int:pk>/accept/", FriendRequestAcceptView.as_view(), name="friend-accept"),\n    path("social/friends/<int:pk>/decline/", FriendRequestDeclineView.as_view(), name="friend-decline"),\n    path("social/friends/<int:pk>/cancel/", FriendRequestCancelView.as_view(), name="friend-cancel"),\n    path("social/friends/<int:pk>/remove/", FriendshipRemoveView.as_view(), name="friend-remove"),\n',
+          )
+
+          # ------------------------------------------------------------------
+          # Rooms: bots are RoomPlayer rows, never fake User accounts.
+          # ------------------------------------------------------------------
+          replace_once(
+              'rooms/models.py',
+              '''    name = models.CharField(max_length=40)\n    seat_index = models.PositiveSmallIntegerField()\n    is_owner = models.BooleanField(default=False)\n''',
+              '''    name = models.CharField(max_length=40)\n    seat_index = models.PositiveSmallIntegerField()\n    is_owner = models.BooleanField(default=False)\n    is_bot = models.BooleanField(default=False, db_index=True)\n''',
+          )
+
+          replace_once(
+              'rooms/serializers.py',
+              '            "is_owner",\n            "is_active",\n',
+              '            "is_owner",\n            "is_bot",\n            "is_active",\n',
+          )
+          replace_once(
+              'rooms/serializers.py',
+              '''    is_locked = serializers.BooleanField(source="has_password", read_only=True)\n    is_full = serializers.BooleanField(read_only=True)\n    players = RoomPlayerSerializer(many=True, read_only=True)\n''',
+              '''    is_locked = serializers.BooleanField(source="has_password", read_only=True)\n    is_full = serializers.BooleanField(read_only=True)\n    bot_count = serializers.SerializerMethodField()\n    players = RoomPlayerSerializer(many=True, read_only=True)\n''',
+          )
+          replace_once(
+              'rooms/serializers.py',
+              '            "current_players",\n            "is_locked",\n',
+              '            "current_players",\n            "bot_count",\n            "is_locked",\n',
+          )
+          replace_once(
+              'rooms/serializers.py',
+              '\n\nclass GameRoomCreateSerializer(serializers.Serializer):\n    max_players = serializers.IntegerField(min_value=2, max_value=4)\n',
+              '''\n\n    def get_bot_count(self, obj):\n        return obj.players.filter(is_active=True, is_bot=True).count()\n\n\nclass GameRoomCreateSerializer(serializers.Serializer):\n    max_players = serializers.IntegerField(min_value=2, max_value=4)\n    bot_count = serializers.IntegerField(min_value=0, max_value=3, default=0)\n''',
+          )
+          replace_once(
+              'rooms/serializers.py',
+              '''        game_mode = attrs.get("game_mode", GameRoom.GameMode.CLASSIC_101)\n        max_players = attrs["max_players"]\n\n        if game_mode == GameRoom.GameMode.CLASSIC_101:\n''',
+              '''        game_mode = attrs.get("game_mode", GameRoom.GameMode.CLASSIC_101)\n        max_players = attrs["max_players"]\n        bot_count = attrs.get("bot_count", 0)\n\n        if bot_count > max_players - 1:\n            raise serializers.ValidationError(\n                {"bot_count": "Количество ботов должно оставлять место создателю комнаты."}\n            )\n\n        if game_mode == GameRoom.GameMode.CLASSIC_101:\n''',
+          )
+
+          replace_once(
+              'rooms/services.py',
+              '''    new_owner = (\n        room.players.filter(is_active=True)\n        .order_by("seat_index", "joined_at")\n        .first()\n    )\n''',
+              '''    new_owner = (\n        room.players.filter(is_active=True, is_bot=False)\n        .order_by("seat_index", "joined_at")\n        .first()\n    )\n''',
+          )
+          replace_once(
+              'rooms/services.py',
+              '''    target_score=101,\n    password="",\n    name="",\n):\n''',
+              '''    target_score=101,\n    bot_count=0,\n    password="",\n    name="",\n):\n''',
+          )
+          replace_once(
+              'rooms/services.py',
+              '''    if game_mode == GameRoom.GameMode.CLASSIC_101 and max_players != 2:\n        raise ValidationError({"max_players": "Для правила 101 нужен стол на 2 игроков."})\n\n    player_name = _player_name_for_user(user)\n''',
+              '''    if game_mode == GameRoom.GameMode.CLASSIC_101 and max_players != 2:\n        raise ValidationError({"max_players": "Для правила 101 нужен стол на 2 игроков."})\n\n    bot_count = int(bot_count or 0)\n    if bot_count < 0 or bot_count > max_players - 1:\n        raise ValidationError(\n            {"bot_count": "Количество ботов должно быть от 0 до числа свободных мест."}\n        )\n\n    player_name = _player_name_for_user(user)\n''',
+          )
+          replace_once(
+              'rooms/services.py',
+              '''    RoomPlayer.objects.create(\n        room=room,\n        user=user,\n        name=player_name,\n        seat_index=0,\n        is_owner=True,\n        is_active=True,\n        is_online=False,\n    )\n    return room\n''',
+              '''    RoomPlayer.objects.create(\n        room=room,\n        user=user,\n        name=player_name,\n        seat_index=0,\n        is_owner=True,\n        is_bot=False,\n        is_active=True,\n        is_online=False,\n    )\n\n    for index in range(bot_count):\n        RoomPlayer.objects.create(\n            room=room,\n            user=None,\n            name=f"Bot {index + 1}",\n            seat_index=index + 1,\n            is_owner=False,\n            is_bot=True,\n            is_active=True,\n            is_online=True,\n        )\n\n    return room\n''',
+          )
+          replace_once(
+              'rooms/services.py',
+              '''    if room.status == GameRoom.Status.WAITING:\n        player.delete()\n\n        if not room.players.filter(is_active=True).exists():\n            deleted_room_id = room.pk\n            room.delete()\n            transaction.on_commit(lambda: broadcast_room_deleted(deleted_room_id))\n            return {"room_deleted": True}\n\n        if was_owner:\n            _promote_new_owner(room)\n''',
+              '''    if room.status == GameRoom.Status.WAITING:\n        player.delete()\n\n        # Bots never keep a lobby alive by themselves and can never become host.\n        if not room.players.filter(is_active=True, is_bot=False).exists():\n            deleted_room_id = room.pk\n            room.delete()\n            transaction.on_commit(lambda: broadcast_room_deleted(deleted_room_id))\n            return {"room_deleted": True}\n\n        if was_owner:\n            _promote_new_owner(room)\n''',
+          )
+          replace_once(
+              'rooms/services.py',
+              '''    active_players_exist = room.players.filter(is_active=True).exists()\n\n    if not active_players_exist:\n        deleted_room_id = room.pk\n        room.delete()\n        transaction.on_commit(lambda: broadcast_room_deleted(deleted_room_id))\n        return {"room_deleted": True}\n\n    if was_owner:\n        _promote_new_owner(room)\n''',
+              '''    active_players_exist = room.players.filter(is_active=True).exists()\n    active_humans_exist = room.players.filter(is_active=True, is_bot=False).exists()\n\n    if not active_players_exist or not active_humans_exist:\n        deleted_room_id = room.pk\n        room.delete()\n        transaction.on_commit(lambda: broadcast_room_deleted(deleted_room_id))\n        return {"room_deleted": True}\n\n    if was_owner:\n        _promote_new_owner(room)\n''',
+          )
+
+          replace_once(
+              'rooms/views.py',
+              '''            target_score=serializer.validated_data["target_score"],\n            password=serializer.validated_data.get("password", ""),\n''',
+              '''            target_score=serializer.validated_data["target_score"],\n            bot_count=serializer.validated_data.get("bot_count", 0),\n            password=serializer.validated_data.get("password", ""),\n''',
+          )
+
+          presence = Path('rooms/presence.py')
+          text = presence.read_text()
+          text = text.replace(
+              '        is_active=True,\n    ).update(**updates)',
+              '        is_active=True,\n        is_bot=False,\n    ).update(**updates)',
+              1,
+          )
+          text = text.replace(
+              '        is_active=True,\n    )\n    if connection_token is not None:',
+              '        is_active=True,\n        is_bot=False,\n    )\n    if connection_token is not None:',
+              2,
+          )
+          replace_old = '''        room_id=room_id,\n        is_active=True,\n        is_online=True,\n        last_seen_at__lt=cutoff,\n'''
+          replace_new = '''        room_id=room_id,\n        is_active=True,\n        is_bot=False,\n        is_online=True,\n        last_seen_at__lt=cutoff,\n'''
+          if text.count(replace_old) != 1:
+              raise SystemExit('rooms/presence.py stale match failed')
+          text = text.replace(replace_old, replace_new, 1)
+          text = text.replace(
+              '        active_players = [player for player in room.players.all() if player.is_active]\n',
+              '        active_players = [\n            player\n            for player in room.players.all()\n            if player.is_active and not player.is_bot\n        ]\n',
+              1,
+          )
+          presence.write_text(text)
+
+          # ------------------------------------------------------------------
+          # Game state and server-side bot turns.
+          # ------------------------------------------------------------------
+          replace_once(
+              'game/state.py',
+              '                "is_owner": player.is_owner,\n                "is_active": player.is_active,\n',
+              '                "is_owner": player.is_owner,\n                "is_bot": player.is_bot,\n                "is_active": player.is_active,\n',
+          )
+
+          Path('game/bots.py').write_text('''from .engine import phone_playable_sides, playable_sides\nfrom .models import GameSession\nfrom .services import draw_domino, pass_turn, play_domino\n\n\nBOT_ACTION_LIMIT = 128\n\n\ndef _side_order(side):\n    order = {\n        "center": 0,\n        "left": 1,\n        "right": 2,\n        "top": 1,\n        "bottom": 3,\n    }\n    return order.get(side, 99)\n\n\ndef _choose_bot_move(session, hand, table):\n    if not table:\n        opening_id = session.opening_domino_id\n        for domino in hand:\n            if domino["id"] == opening_id:\n                return domino["id"], "center"\n        return None\n\n    phone_mode = session.room.game_mode == "phone"\n    candidates = []\n    for domino in hand:\n        sides = (\n            phone_playable_sides(domino, table)\n            if phone_mode\n            else playable_sides(domino, table)\n        )\n        for side in sides:\n            candidates.append(\n                (\n                    -(domino["left"] + domino["right"]),\n                    0 if domino["left"] == domino["right"] else 1,\n                    _side_order(side),\n                    domino["id"],\n                    side,\n                )\n            )\n\n    if not candidates:\n        return None\n\n    candidates.sort()\n    chosen = candidates[0]\n    return chosen[3], chosen[4]\n\n\ndef process_bot_turns(*, room_id, max_actions=BOT_ACTION_LIMIT):\n    \"\"\"Plays consecutive server-authoritative bot turns until a human must act.\"\"\"\n    actions = 0\n\n    while actions < max_actions:\n        try:\n            session = (\n                GameSession.objects.select_related("room", "current_player")\n                .get(room_id=room_id)\n            )\n        except GameSession.DoesNotExist:\n            return actions\n\n        if session.status != GameSession.Status.ACTIVE:\n            return actions\n\n        bot = session.current_player\n        if bot is None or not bot.is_active or not bot.is_bot:\n            return actions\n\n        hands = session.hands or {}\n        hand = [dict(item) for item in hands.get(str(bot.id), [])]\n        table = [dict(item) for item in (session.table or [])]\n        move = _choose_bot_move(session, hand, table)\n\n        if move is not None:\n            domino_id, side = move\n            play_domino(\n                room_id=room_id,\n                player_id=bot.id,\n                domino_id=domino_id,\n                side=side,\n            )\n        elif session.boneyard:\n            draw_domino(room_id=room_id, player_id=bot.id)\n        else:\n            pass_turn(room_id=room_id, player_id=bot.id)\n\n        actions += 1\n\n    raise RuntimeError(\n        f"Bot action guard exceeded for room {room_id}: {max_actions} actions."\n    )\n''')
+
+          replace_once(
+              'game/views.py',
+              'from rooms.models import GameRoom, RoomPlayer\n\nfrom .models import GameSession\n',
+              'from rooms.models import GameRoom, RoomPlayer\n\nfrom .bots import process_bot_turns\nfrom .models import GameSession\n',
+          )
+          replace_once(
+              'game/views.py',
+              '''        session = start_game(room_id=room_id, player_id=player_id)\n        session = _game_session_queryset().get(pk=session.pk)\n''',
+              '''        session = start_game(room_id=room_id, player_id=player_id)\n        process_bot_turns(room_id=room_id)\n        session = _game_session_queryset().get(pk=session.pk)\n''',
+          )
+          replace_once(
+              'game/views.py',
+              '''        session = start_next_round(room_id=room_id, player_id=player_id)\n        session = _game_session_queryset().get(pk=session.pk)\n''',
+              '''        session = start_next_round(room_id=room_id, player_id=player_id)\n        process_bot_turns(room_id=room_id)\n        session = _game_session_queryset().get(pk=session.pk)\n''',
+          )
+          replace_once(
+              'game/views.py',
+              '''        process_expired_turn(room_id=room_id)\n        session = get_object_or_404(_game_session_queryset(), room=room)\n''',
+              '''        process_expired_turn(room_id=room_id)\n        process_bot_turns(room_id=room_id)\n        session = get_object_or_404(_game_session_queryset(), room=room)\n''',
+          )
+          replace_once(
+              'game/views.py',
+              '''        session = play_domino(\n            room_id=room_id,\n            player_id=player_id,\n            domino_id=serializer.validated_data["domino_id"],\n            side=serializer.validated_data["side"],\n        )\n        session = _game_session_queryset().get(pk=session.pk)\n''',
+              '''        session = play_domino(\n            room_id=room_id,\n            player_id=player_id,\n            domino_id=serializer.validated_data["domino_id"],\n            side=serializer.validated_data["side"],\n        )\n        process_bot_turns(room_id=room_id)\n        session = _game_session_queryset().get(pk=session.pk)\n''',
+          )
+          replace_once(
+              'game/views.py',
+              '''        session = draw_domino(room_id=room_id, player_id=player_id)\n        session = _game_session_queryset().get(pk=session.pk)\n''',
+              '''        session = draw_domino(room_id=room_id, player_id=player_id)\n        process_bot_turns(room_id=room_id)\n        session = _game_session_queryset().get(pk=session.pk)\n''',
+          )
+          replace_once(
+              'game/views.py',
+              '''        session = pass_turn(room_id=room_id, player_id=player_id)\n        session = _game_session_queryset().get(pk=session.pk)\n''',
+              '''        session = pass_turn(room_id=room_id, player_id=player_id)\n        process_bot_turns(room_id=room_id)\n        session = _game_session_queryset().get(pk=session.pk)\n''',
+          )
+          replace_once(
+              'game/views.py',
+              '''    if not process_expired_turn(room_id=room_id):\n        return None\n\n    session = get_object_or_404(_game_session_queryset(), room_id=room_id)\n''',
+              '''    if not process_expired_turn(room_id=room_id):\n        return None\n\n    process_bot_turns(room_id=room_id)\n    session = get_object_or_404(_game_session_queryset(), room_id=room_id)\n''',
+          )
+
+          # Migration.
+          Path('rooms/migrations/0007_roomplayer_is_bot.py').write_text('''from django.db import migrations, models\n\n\nclass Migration(migrations.Migration):\n    dependencies = [\n        ("rooms", "0006_gameroom_game_mode_target_score"),\n    ]\n\n    operations = [\n        migrations.AddField(\n            model_name="roomplayer",\n            name="is_bot",\n            field=models.BooleanField(db_index=True, default=False),\n        ),\n    ]\n''')
+
+          # Regression tests: PostgreSQL row locking semantics are covered by the
+          # production smoke too; these tests cover permissions and payloads.
+          Path('accounts/test_friend_requests_actions.py').write_text('''from django.contrib.auth import get_user_model\nfrom django.urls import reverse\nfrom rest_framework.test import APITestCase\n\nfrom .models import Friendship\n\n\nUser = get_user_model()\n\n\nclass FriendRequestActionTests(APITestCase):\n    def setUp(self):\n        self.sender = User.objects.create_user(username="friend_sender")\n        self.recipient = User.objects.create_user(username="friend_recipient")\n\n    def test_outgoing_request_can_be_cancelled(self):\n        friendship = Friendship.objects.create(\n            requester=self.sender, addressee=self.recipient\n        )\n        self.client.force_authenticate(self.sender)\n        overview = self.client.get(reverse("social-overview"))\n        self.assertEqual(overview.status_code, 200)\n        self.assertEqual(overview.data["outgoing_requests"][0]["id"], friendship.id)\n\n        response = self.client.post(reverse("friend-cancel", args=[friendship.id]))\n        self.assertEqual(response.status_code, 204)\n        self.assertFalse(Friendship.objects.filter(pk=friendship.id).exists())\n\n    def test_recipient_can_decline_request(self):\n        friendship = Friendship.objects.create(\n            requester=self.sender, addressee=self.recipient\n        )\n        self.client.force_authenticate(self.recipient)\n        response = self.client.post(reverse("friend-decline", args=[friendship.id]))\n        self.assertEqual(response.status_code, 204)\n        self.assertFalse(Friendship.objects.filter(pk=friendship.id).exists())\n\n    def test_recipient_can_accept_request(self):\n        friendship = Friendship.objects.create(\n            requester=self.sender, addressee=self.recipient\n        )\n        self.client.force_authenticate(self.recipient)\n        response = self.client.post(reverse("friend-accept", args=[friendship.id]))\n        self.assertEqual(response.status_code, 200)\n        friendship.refresh_from_db()\n        self.assertEqual(friendship.status, Friendship.Status.ACCEPTED)\n\n    def test_wrong_side_cannot_cancel_or_decline(self):\n        friendship = Friendship.objects.create(\n            requester=self.sender, addressee=self.recipient\n        )\n        self.client.force_authenticate(self.recipient)\n        self.assertEqual(\n            self.client.post(reverse("friend-cancel", args=[friendship.id])).status_code,\n            404,\n        )\n        self.client.force_authenticate(self.sender)\n        self.assertEqual(\n            self.client.post(reverse("friend-decline", args=[friendship.id])).status_code,\n            404,\n        )\n''')
+
+          Path('rooms/test_bots.py').write_text('''from django.contrib.auth import get_user_model\nfrom django.urls import reverse\nfrom rest_framework.test import APITestCase\n\nfrom restaurants.models import Restaurant\nfrom rooms.models import RoomPlayer\n\n\nUser = get_user_model()\n\n\nclass RoomBotTests(APITestCase):\n    def setUp(self):\n        self.user = User.objects.create_user(username="bot_host")\n        self.restaurant = Restaurant.objects.create(name="Bot Test", is_active=True)\n        self.client.force_authenticate(self.user)\n\n    def test_room_can_reserve_mixed_bot_and_human_seats(self):\n        response = self.client.post(\n            reverse("restaurant-rooms", args=[self.restaurant.id]),\n            {\n                "max_players": 4,\n                "game_mode": "phone",\n                "target_score": 72,\n                "bot_count": 2,\n            },\n            format="json",\n        )\n        self.assertEqual(response.status_code, 201)\n        self.assertEqual(response.data["current_players"], 3)\n        self.assertEqual(response.data["bot_count"], 2)\n        bots = [item for item in response.data["players"] if item["is_bot"]]\n        self.assertEqual(len(bots), 2)\n        self.assertTrue(all(item["user_id"] is None for item in bots))\n        self.assertTrue(all(item["is_online"] for item in bots))\n\n    def test_classic_room_can_be_host_vs_bot(self):\n        response = self.client.post(\n            reverse("restaurant-rooms", args=[self.restaurant.id]),\n            {"max_players": 2, "game_mode": "101", "bot_count": 1},\n            format="json",\n        )\n        self.assertEqual(response.status_code, 201)\n        self.assertTrue(response.data["is_full"])\n        self.assertEqual(response.data["bot_count"], 1)\n\n    def test_bot_count_cannot_take_host_seat(self):\n        response = self.client.post(\n            reverse("restaurant-rooms", args=[self.restaurant.id]),\n            {\n                "max_players": 4,\n                "game_mode": "phone",\n                "target_score": 72,\n                "bot_count": 4,\n            },\n            format="json",\n        )\n        self.assertEqual(response.status_code, 400)\n\n    def test_bots_never_become_owner_when_host_leaves(self):\n        response = self.client.post(\n            reverse("restaurant-rooms", args=[self.restaurant.id]),\n            {"max_players": 2, "game_mode": "101", "bot_count": 1},\n            format="json",\n        )\n        room_id = response.data["id"]\n        host_id = next(item["id"] for item in response.data["players"] if not item["is_bot"])\n        left = self.client.post(\n            reverse("room-leave", args=[room_id]),\n            {"player_id": host_id},\n            format="json",\n        )\n        self.assertEqual(left.status_code, 200)\n        self.assertTrue(left.data["room_deleted"])\n        self.assertFalse(RoomPlayer.objects.filter(room_id=room_id).exists())\n''')
+
+          Path('game/test_bots.py').write_text('''from django.contrib.auth import get_user_model\nfrom django.test import TestCase\n\nfrom restaurants.models import Restaurant\nfrom rooms.models import GameRoom, RoomPlayer\n\nfrom .bots import process_bot_turns\nfrom .models import GameSession\n\n\nUser = get_user_model()\n\n\nclass ServerBotTurnTests(TestCase):\n    def test_bot_uses_same_authoritative_play_service(self):\n        user = User.objects.create_user(username="human")\n        restaurant = Restaurant.objects.create(name="Bot Engine", is_active=True)\n        room = GameRoom.objects.create(\n            restaurant=restaurant,\n            owner_name="Human",\n            max_players=2,\n            status=GameRoom.Status.PLAYING,\n        )\n        human = RoomPlayer.objects.create(\n            room=room, user=user, name="Human", seat_index=0, is_owner=True\n        )\n        bot = RoomPlayer.objects.create(\n            room=room,\n            name="Bot 1",\n            seat_index=1,\n            is_bot=True,\n            is_online=True,\n        )\n        session = GameSession.objects.create(\n            room=room,\n            current_player=bot,\n            opening_player=bot,\n            opening_domino_id=27,\n            hands={\n                str(human.id): [{"id": 20, "left": 5, "right": 5}],\n                str(bot.id): [{"id": 27, "left": 6, "right": 6}],\n            },\n            boneyard=[],\n            table=[],\n            scores={str(human.id): 0, str(bot.id): 0},\n        )\n\n        actions = process_bot_turns(room_id=room.id)\n        self.assertEqual(actions, 1)\n        session.refresh_from_db()\n        self.assertEqual(len(session.table), 1)\n        self.assertEqual(session.table[0]["played_by_player_id"], bot.id)\n        self.assertNotEqual(session.status, GameSession.Status.ACTIVE)\n''')
+
+          # Syntax and whitespace sanity before committing.
+          import compileall
+          if not compileall.compile_dir('accounts', quiet=1):
+              raise SystemExit('accounts compile failed')
+          if not compileall.compile_dir('rooms', quiet=1):
+              raise SystemExit('rooms compile failed')
+          if not compileall.compile_dir('game', quiet=1):
+              raise SystemExit('game compile failed')
+          PY
+
+          git diff --check
+          git status --short
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add accounts rooms game
+          git commit -m 'Fix friend requests and add server bots'
+          git push
