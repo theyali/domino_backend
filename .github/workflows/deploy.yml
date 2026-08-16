@@ -69,9 +69,6 @@ jobs:
             ufw allow 80/tcp || true
           fi
 
-          # Capture the currently running container logs before a rebuild replaces
-          # it. This makes production-only 500 tracebacks visible in the deploy
-          # run instead of losing them during container recreation.
           if [ -d /opt/domino_backend/.git ]; then
             cd /opt/domino_backend
             echo "=== Recent backend logs before deploy ==="
@@ -157,6 +154,116 @@ jobs:
             fi
             sleep 2
           done
+
+          docker compose exec -T web python manage.py check
+          docker compose exec -T web python manage.py makemigrations --check --dry-run
+
+          echo "Checking global gift purchase/send flow..."
+          docker compose exec -T web python manage.py shell <<'PY'
+          from decimal import Decimal
+          from uuid import uuid4
+
+          from django.contrib.auth import get_user_model
+          from rest_framework.test import APIClient
+
+          from gifts.models import Gift, GiftPurchase, InventoryGift
+          from restaurants.models import Restaurant
+          from rooms.models import GameRoom, RoomPlayer
+
+          suffix = uuid4().hex[:10]
+          User = get_user_model()
+          sender = recipient = restaurant = room = gift = None
+
+          try:
+              sender = User.objects.create_user(username=f"gift_smoke_sender_{suffix}")
+              recipient = User.objects.create_user(username=f"gift_smoke_recipient_{suffix}")
+              restaurant = Restaurant.objects.create(name=f"Gift smoke {suffix}")
+              room = GameRoom.objects.create(
+                  restaurant=restaurant,
+                  name=f"Smoke {suffix}",
+                  owner_name=sender.username,
+                  max_players=2,
+                  status=GameRoom.Status.PLAYING,
+              )
+              sender_player = RoomPlayer.objects.create(
+                  room=room,
+                  user=sender,
+                  name=sender.username,
+                  seat_index=0,
+                  is_owner=True,
+              )
+              recipient_player = RoomPlayer.objects.create(
+                  room=room,
+                  user=recipient,
+                  name=recipient.username,
+                  seat_index=1,
+              )
+              gift = Gift.objects.create(
+                  restaurant=None,
+                  name=f"Global smoke gift {suffix}",
+                  price=Decimal("99.00"),
+                  level=5,
+              )
+
+              client = APIClient()
+              client.force_authenticate(user=sender)
+
+              catalog = client.get(f"/api/restaurants/{restaurant.id}/gifts/")
+              assert catalog.status_code == 200, catalog.content
+              catalog_ids = {item["id"] for item in catalog.json()}
+              assert gift.id in catalog_ids, catalog.content
+
+              purchase = client.post(
+                  f"/api/restaurants/{restaurant.id}/gifts/{gift.id}/purchase/",
+                  {"quantity": 2},
+                  format="json",
+              )
+              assert purchase.status_code == 200, purchase.content
+
+              sent = client.post(
+                  f"/api/rooms/{room.id}/gifts/send/",
+                  {
+                      "gift_id": gift.id,
+                      "recipient_player_ids": [
+                          sender_player.id,
+                          recipient_player.id,
+                      ],
+                  },
+                  format="json",
+              )
+              assert sent.status_code == 200, sent.content
+              payload = sent.json()
+              assert payload["gift"]["is_global"] is True, payload
+              assert payload["gift"]["level"] == 5, payload
+
+              sender_player.refresh_from_db()
+              recipient_player.refresh_from_db()
+              assert sender_player.active_gift_id == gift.id
+              assert recipient_player.active_gift_id == gift.id
+
+              received_items = InventoryGift.objects.filter(
+                  gift=gift,
+                  is_giftable=False,
+              )
+              assert received_items.filter(owner=sender, gifted_by=sender).exists()
+              assert received_items.filter(owner=recipient, gifted_by=sender).exists()
+
+              print("Global gift purchase/send smoke check passed.")
+          finally:
+              if gift is not None:
+                  InventoryGift.objects.filter(gift=gift).delete()
+                  GiftPurchase.objects.filter(gift=gift).delete()
+              if room is not None:
+                  room.delete()
+              if gift is not None:
+                  gift.delete()
+              if restaurant is not None:
+                  restaurant.delete()
+              if sender is not None:
+                  sender.delete()
+              if recipient is not None:
+                  recipient.delete()
+          PY
 
           echo "Checking idle Channels receive for Redis timeout regression..."
           docker compose exec -T web python manage.py shell <<'PY'
