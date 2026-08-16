@@ -73,3 +73,10 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "${DOCKER_SUBNET:-172.30.240.0/24}"
