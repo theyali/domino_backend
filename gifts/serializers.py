@@ -4,7 +4,8 @@ from .models import Gift, GiftPurchase, InventoryGift
 
 
 class GiftSerializer(serializers.ModelSerializer):
-    restaurant_name = serializers.CharField(source="restaurant.name", read_only=True)
+    restaurant_name = serializers.SerializerMethodField()
+    is_global = serializers.BooleanField(read_only=True)
     image_url = serializers.SerializerMethodField()
     giftable_count = serializers.SerializerMethodField()
 
@@ -14,12 +15,19 @@ class GiftSerializer(serializers.ModelSerializer):
             "id",
             "restaurant_id",
             "restaurant_name",
+            "is_global",
             "name",
             "price",
+            "level",
             "image_url",
             "is_active",
             "giftable_count",
         )
+
+    def get_restaurant_name(self, obj):
+        if obj.restaurant_id is None:
+            return None
+        return obj.restaurant.name
 
     def get_image_url(self, obj):
         if not obj.image:
@@ -93,7 +101,7 @@ class SendGiftSerializer(serializers.Serializer):
     recipient_player_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         min_length=1,
-        max_length=3,
+        max_length=4,
         allow_empty=False,
     )
 
