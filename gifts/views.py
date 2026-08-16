@@ -33,7 +33,7 @@ class RestaurantGiftListView(ListAPIView):
         )
         return (
             Gift.objects.filter(
-                restaurant=restaurant,
+                Q(restaurant=restaurant) | Q(restaurant__isnull=True),
                 is_active=True,
             )
             .select_related("restaurant")
@@ -47,6 +47,7 @@ class RestaurantGiftListView(ListAPIView):
                     ),
                 )
             )
+            .order_by("level", "price", "id")
         )
 
 
@@ -67,10 +68,11 @@ class PurchaseGiftView(APIView):
             is_active=True,
         )
         gift = get_object_or_404(
-            Gift,
+            Gift.objects.filter(
+                Q(restaurant=restaurant) | Q(restaurant__isnull=True),
+                is_active=True,
+            ),
             pk=gift_id,
-            restaurant=restaurant,
-            is_active=True,
         )
         serializer = PurchaseGiftSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -147,7 +149,7 @@ class GiftPurchaseSummaryView(APIView):
                 )
             )
             .filter(giftable_count__gt=0)
-            .order_by("restaurant__name", "price", "id")
+            .order_by("level", "restaurant__name", "price", "id")
         )
         available_count = sum(
             int(getattr(gift, "giftable_count", 0) or 0)
