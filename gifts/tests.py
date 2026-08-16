@@ -42,11 +42,19 @@ class GiftApiTests(APITestCase):
             name="Кальян",
             price="25.00",
             image="gifts/hookah.png",
+            level=2,
         )
         self.tea = Gift.objects.create(
             restaurant=self.restaurant,
             name="Чай",
             price="8.00",
+            level=1,
+        )
+        self.global_gift = Gift.objects.create(
+            restaurant=None,
+            name="Роза",
+            price="30.00",
+            level=4,
         )
         Gift.objects.create(
             restaurant=self.restaurant,
@@ -67,26 +75,37 @@ class GiftApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, 401)
 
-    def test_restaurant_gifts_returns_only_active_gifts_for_that_restaurant(self):
+    def test_restaurant_gifts_returns_restaurant_and_global_gifts(self):
         response = self.client.get(
             reverse("restaurant-gifts", args=[self.restaurant.id])
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([item["name"] for item in response.data], ["Чай", "Кальян"])
-        self.assertTrue(
-            all(item["restaurant_id"] == self.restaurant.id for item in response.data)
+        self.assertEqual(
+            [item["name"] for item in response.data],
+            ["Чай", "Кальян", "Роза"],
         )
         self.assertTrue(all(item["giftable_count"] == 0 for item in response.data))
 
         tea_data = next(item for item in response.data if item["name"] == "Чай")
         hookah_data = next(item for item in response.data if item["name"] == "Кальян")
+        global_data = next(item for item in response.data if item["name"] == "Роза")
 
+        self.assertEqual(tea_data["restaurant_id"], self.restaurant.id)
+        self.assertFalse(tea_data["is_global"])
+        self.assertEqual(tea_data["level"], 1)
         self.assertIsNone(tea_data["image_url"])
+
+        self.assertEqual(hookah_data["level"], 2)
         self.assertEqual(
             hookah_data["image_url"],
             "http://testserver/media/gifts/hookah.png",
         )
+
+        self.assertIsNone(global_data["restaurant_id"])
+        self.assertIsNone(global_data["restaurant_name"])
+        self.assertTrue(global_data["is_global"])
+        self.assertEqual(global_data["level"], 4)
 
     def test_prototype_purchase_adds_giftable_stock(self):
         response = self.client.post(
@@ -112,6 +131,28 @@ class GiftApiTests(APITestCase):
         )
         hookah_data = next(item for item in catalog.data if item["id"] == self.hookah.id)
         self.assertEqual(hookah_data["giftable_count"], 3)
+
+    def test_global_gift_can_be_purchased_from_any_restaurant_catalog(self):
+        response = self.client.post(
+            reverse(
+                "purchase-gift",
+                args=[self.other_restaurant.id, self.global_gift.id],
+            ),
+            {"quantity": 2},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["added"], 2)
+        self.assertEqual(response.data["giftable_count"], 2)
+        self.assertEqual(
+            InventoryGift.objects.filter(
+                owner=self.user,
+                gift=self.global_gift,
+                is_giftable=True,
+            ).count(),
+            2,
+        )
 
     def test_inventory_returns_only_received_gifts(self):
         received = InventoryGift.objects.create(
@@ -221,11 +262,19 @@ class MultiplayerGiftTests(APITestCase):
             restaurant=self.restaurant,
             name="Кальян",
             price="20.00",
+            level=2,
         )
         self.beer = Gift.objects.create(
             restaurant=self.restaurant,
             name="Пиво",
             price="10.00",
+            level=1,
+        )
+        self.global_gift = Gift.objects.create(
+            restaurant=None,
+            name="Золотая корона",
+            price="100.00",
+            level=5,
         )
 
     def _authenticate(self, user):
@@ -243,20 +292,35 @@ class MultiplayerGiftTests(APITestCase):
             format="json",
         )
 
-    def test_cannot_send_gift_to_self(self):
+    def test_can_send_gift_to_self(self):
         item = InventoryGift.objects.create(owner=self.ali, gift=self.hookah)
 
         response = self._send(self.hookah, [self.ali_player.id])
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 200)
         item.refresh_from_db()
         self.ali_player.refresh_from_db()
 
         self.assertEqual(item.owner_id, self.ali.id)
-        self.assertTrue(item.is_giftable)
-        self.assertIsNone(item.gifted_by_id)
-        self.assertIsNone(item.gifted_at)
-        self.assertIsNone(self.ali_player.active_gift_id)
+        self.assertFalse(item.is_giftable)
+        self.assertEqual(item.gifted_by_id, self.ali.id)
+        self.assertIsNotNone(item.gifted_at)
+        self.assertEqual(self.ali_player.active_gift_id, self.hookah.id)
+
+    def test_global_gift_can_be_sent_in_restaurant_room(self):
+        item = InventoryGift.objects.create(owner=self.ali, gift=self.global_gift)
+
+        response = self._send(self.global_gift, [self.john_player.id])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["gift"]["is_global"])
+        self.assertEqual(response.data["gift"]["level"], 5)
+
+        item.refresh_from_db()
+        self.john_player.refresh_from_db()
+        self.assertEqual(item.owner_id, self.john.id)
+        self.assertFalse(item.is_giftable)
+        self.assertEqual(self.john_player.active_gift_id, self.global_gift.id)
 
     def test_send_same_gift_to_three_players_transfers_three_inventory_items(self):
         items = [
