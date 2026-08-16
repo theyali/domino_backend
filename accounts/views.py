@@ -344,7 +344,8 @@ class FriendRequestCreateView(APIView):
                     title="Новая заявка в друзья",
                     body=f"{sender_name} хочет добавить тебя в друзья.",
                     data={"user_id": request.user.id},
-                )
+                ),
+                robust=True,
             )
         elif push_kind == "friend_accepted":
             accepter_name = (request.user.get_full_name() or request.user.username).strip()
@@ -355,7 +356,8 @@ class FriendRequestCreateView(APIView):
                     title="Теперь вы друзья",
                     body=f"{accepter_name} принял твою заявку в друзья.",
                     data={"user_id": request.user.id},
-                )
+                ),
+                robust=True,
             )
 
         return Response(
@@ -371,9 +373,7 @@ class FriendRequestAcceptView(APIView):
     def post(self, request, pk):
         touch_presence(request.user)
         friendship = get_object_or_404(
-            Friendship.objects.select_for_update().select_related(
-                "requester", "requester__profile"
-            ),
+            Friendship.objects.select_for_update().select_related("requester"),
             pk=pk,
             addressee=request.user,
             status=Friendship.Status.PENDING,
@@ -397,7 +397,8 @@ class FriendRequestAcceptView(APIView):
                 title="Теперь вы друзья",
                 body=f"{accepter_name} принял твою заявку в друзья.",
                 data={"user_id": request.user.id},
-            )
+            ),
+            robust=True,
         )
 
         return Response(
@@ -407,6 +408,38 @@ class FriendRequestAcceptView(APIView):
                 friendship=friendship,
             )
         )
+
+
+class FriendRequestDeclineView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, pk):
+        touch_presence(request.user)
+        friendship = get_object_or_404(
+            Friendship.objects.select_for_update(),
+            pk=pk,
+            addressee=request.user,
+            status=Friendship.Status.PENDING,
+        )
+        friendship.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class FriendRequestCancelView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, pk):
+        touch_presence(request.user)
+        friendship = get_object_or_404(
+            Friendship.objects.select_for_update(),
+            pk=pk,
+            requester=request.user,
+            status=Friendship.Status.PENDING,
+        )
+        friendship.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class FriendshipRemoveView(APIView):

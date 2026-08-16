@@ -3,7 +3,9 @@ from django.urls import path
 from .views import (
     DirectMessageThreadView,
     FriendRequestAcceptView,
+    FriendRequestCancelView,
     FriendRequestCreateView,
+    FriendRequestDeclineView,
     FriendshipRemoveView,
     LoginView,
     LogoutView,
@@ -49,6 +51,8 @@ urlpatterns = [
     ),
     path("social/friends/request/", FriendRequestCreateView.as_view(), name="friend-request"),
     path("social/friends/<int:pk>/accept/", FriendRequestAcceptView.as_view(), name="friend-accept"),
+    path("social/friends/<int:pk>/decline/", FriendRequestDeclineView.as_view(), name="friend-decline"),
+    path("social/friends/<int:pk>/cancel/", FriendRequestCancelView.as_view(), name="friend-cancel"),
     path("social/friends/<int:pk>/remove/", FriendshipRemoveView.as_view(), name="friend-remove"),
     path("social/chats/<int:user_id>/", DirectMessageThreadView.as_view(), name="direct-message-thread"),
     path("social/rooms/<int:room_id>/invitations/", RoomInvitationCreateView.as_view(), name="room-invitations"),

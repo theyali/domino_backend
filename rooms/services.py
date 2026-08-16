@@ -32,7 +32,7 @@ def _player_name_for_user(user):
 
 def _promote_new_owner(room):
     new_owner = (
-        room.players.filter(is_active=True)
+        room.players.filter(is_active=True, is_bot=False)
         .order_by("seat_index", "joined_at")
         .first()
     )
@@ -58,6 +58,7 @@ def create_room(
     max_players,
     game_mode=GameRoom.GameMode.CLASSIC_101,
     target_score=101,
+    bot_count=0,
     password="",
     name="",
 ):
@@ -66,6 +67,12 @@ def create_room(
 
     if game_mode == GameRoom.GameMode.CLASSIC_101 and max_players != 2:
         raise ValidationError({"max_players": "Для правила 101 нужен стол на 2 игроков."})
+
+    bot_count = int(bot_count or 0)
+    if bot_count < 0 or bot_count > max_players - 1:
+        raise ValidationError(
+            {"bot_count": "Количество ботов должно быть от 0 до числа свободных мест."}
+        )
 
     player_name = _player_name_for_user(user)
 
@@ -86,9 +93,23 @@ def create_room(
         name=player_name,
         seat_index=0,
         is_owner=True,
+        is_bot=False,
         is_active=True,
         is_online=False,
     )
+
+    for index in range(bot_count):
+        RoomPlayer.objects.create(
+            room=room,
+            user=None,
+            name=f"Bot {index + 1}",
+            seat_index=index + 1,
+            is_owner=False,
+            is_bot=True,
+            is_active=True,
+            is_online=True,
+        )
+
     return room
 
 
@@ -149,7 +170,8 @@ def leave_room(*, room_id, player_id):
     if room.status == GameRoom.Status.WAITING:
         player.delete()
 
-        if not room.players.filter(is_active=True).exists():
+        # Bots never keep a lobby alive by themselves and can never become host.
+        if not room.players.filter(is_active=True, is_bot=False).exists():
             deleted_room_id = room.pk
             room.delete()
             transaction.on_commit(lambda: broadcast_room_deleted(deleted_room_id))
@@ -177,8 +199,9 @@ def leave_room(*, room_id, player_id):
     )
 
     active_players_exist = room.players.filter(is_active=True).exists()
+    active_humans_exist = room.players.filter(is_active=True, is_bot=False).exists()
 
-    if not active_players_exist:
+    if not active_players_exist or not active_humans_exist:
         deleted_room_id = room.pk
         room.delete()
         transaction.on_commit(lambda: broadcast_room_deleted(deleted_room_id))

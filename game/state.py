@@ -111,6 +111,7 @@ def serialize_game_state_for_player(session, player_id):
                 "gender": _gender_for_player(player),
                 "seat_index": player.seat_index,
                 "is_owner": player.is_owner,
+                "is_bot": player.is_bot,
                 "is_active": player.is_active,
                 "is_online": player.is_online,
                 "last_seen_at": (

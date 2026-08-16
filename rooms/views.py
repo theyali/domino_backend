@@ -47,6 +47,7 @@ class RestaurantRoomsView(APIView):
             max_players=serializer.validated_data["max_players"],
             game_mode=serializer.validated_data["game_mode"],
             target_score=serializer.validated_data["target_score"],
+            bot_count=serializer.validated_data.get("bot_count", 0),
             password=serializer.validated_data.get("password", ""),
             name=serializer.validated_data.get("name", ""),
         )

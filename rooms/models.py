@@ -93,6 +93,7 @@ class RoomPlayer(models.Model):
     name = models.CharField(max_length=40)
     seat_index = models.PositiveSmallIntegerField()
     is_owner = models.BooleanField(default=False)
+    is_bot = models.BooleanField(default=False, db_index=True)
     is_active = models.BooleanField(default=True)
     is_online = models.BooleanField(default=False)
     last_seen_at = models.DateTimeField(default=timezone.now)

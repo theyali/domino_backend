@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 
 from rooms.models import GameRoom, RoomPlayer
 
+from .bots import process_bot_turns
 from .models import GameSession
 from .serializers import (
     PlayDominoSerializer,
@@ -28,6 +29,7 @@ class StartGameView(APIView):
         player_id = serializer.validated_data["player_id"]
 
         session = start_game(room_id=room_id, player_id=player_id)
+        process_bot_turns(room_id=room_id)
         session = _game_session_queryset().get(pk=session.pk)
 
         return Response(
@@ -48,6 +50,7 @@ class NextRoundView(APIView):
         player_id = serializer.validated_data["player_id"]
 
         session = start_next_round(room_id=room_id, player_id=player_id)
+        process_bot_turns(room_id=room_id)
         session = _game_session_queryset().get(pk=session.pk)
 
         return Response(
@@ -84,6 +87,7 @@ class GameStateView(APIView):
             )
 
         process_expired_turn(room_id=room_id)
+        process_bot_turns(room_id=room_id)
         session = get_object_or_404(_game_session_queryset(), room=room)
 
         return Response(
@@ -116,6 +120,7 @@ class PlayDominoView(APIView):
             domino_id=serializer.validated_data["domino_id"],
             side=serializer.validated_data["side"],
         )
+        process_bot_turns(room_id=room_id)
         session = _game_session_queryset().get(pk=session.pk)
 
         return Response(
@@ -143,6 +148,7 @@ class DrawDominoView(APIView):
             return timeout_response
 
         session = draw_domino(room_id=room_id, player_id=player_id)
+        process_bot_turns(room_id=room_id)
         session = _game_session_queryset().get(pk=session.pk)
 
         return Response(
@@ -170,6 +176,7 @@ class PassTurnView(APIView):
             return timeout_response
 
         session = pass_turn(room_id=room_id, player_id=player_id)
+        process_bot_turns(room_id=room_id)
         session = _game_session_queryset().get(pk=session.pk)
 
         return Response(
@@ -194,6 +201,7 @@ def _timeout_response_if_processed(*, room_id, player_id):
     if not process_expired_turn(room_id=room_id):
         return None
 
+    process_bot_turns(room_id=room_id)
     session = get_object_or_404(_game_session_queryset(), room_id=room_id)
     return Response(
         {

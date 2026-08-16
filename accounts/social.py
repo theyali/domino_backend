@@ -237,6 +237,7 @@ def social_overview(user):
 
     friends = []
     incoming_requests = []
+    outgoing_requests = []
     for friendship in friendships:
         other = friendship.addressee if friendship.requester_id == user.id else friendship.requester
         if is_blocked_between(user, other):
@@ -245,6 +246,14 @@ def social_overview(user):
             friends.append(public_user_payload(other, user, friendship=friendship))
         elif friendship.addressee_id == user.id:
             incoming_requests.append(
+                {
+                    "id": friendship.id,
+                    "user": public_user_payload(other, user, friendship=friendship),
+                    "created_at": friendship.created_at.isoformat(),
+                }
+            )
+        else:
+            outgoing_requests.append(
                 {
                     "id": friendship.id,
                     "user": public_user_payload(other, user, friendship=friendship),
@@ -319,6 +328,7 @@ def social_overview(user):
     return {
         "friends": friends,
         "incoming_requests": incoming_requests,
+        "outgoing_requests": outgoing_requests,
         "recent_players": recent_players_for(user, limit=10),
         "conversations": conversations,
         "invitations": invitations,

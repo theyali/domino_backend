@@ -18,6 +18,7 @@ class RoomPlayerSerializer(serializers.ModelSerializer):
             "gender",
             "seat_index",
             "is_owner",
+            "is_bot",
             "is_active",
             "is_online",
             "last_seen_at",
@@ -62,6 +63,7 @@ class GameRoomSerializer(serializers.ModelSerializer):
     current_players = serializers.IntegerField(read_only=True)
     is_locked = serializers.BooleanField(source="has_password", read_only=True)
     is_full = serializers.BooleanField(read_only=True)
+    bot_count = serializers.SerializerMethodField()
     players = RoomPlayerSerializer(many=True, read_only=True)
 
     class Meta:
@@ -77,6 +79,7 @@ class GameRoomSerializer(serializers.ModelSerializer):
             "game_mode_label",
             "target_score",
             "current_players",
+            "bot_count",
             "is_locked",
             "is_full",
             "status",
@@ -85,8 +88,13 @@ class GameRoomSerializer(serializers.ModelSerializer):
         )
 
 
+    def get_bot_count(self, obj):
+        return obj.players.filter(is_active=True, is_bot=True).count()
+
+
 class GameRoomCreateSerializer(serializers.Serializer):
     max_players = serializers.IntegerField(min_value=2, max_value=4)
+    bot_count = serializers.IntegerField(min_value=0, max_value=3, default=0)
     game_mode = serializers.ChoiceField(
         choices=GameRoom.GameMode.choices,
         default=GameRoom.GameMode.CLASSIC_101,
@@ -111,6 +119,12 @@ class GameRoomCreateSerializer(serializers.Serializer):
     def validate(self, attrs):
         game_mode = attrs.get("game_mode", GameRoom.GameMode.CLASSIC_101)
         max_players = attrs["max_players"]
+        bot_count = attrs.get("bot_count", 0)
+
+        if bot_count > max_players - 1:
+            raise serializers.ValidationError(
+                {"bot_count": "Количество ботов должно оставлять место создателю комнаты."}
+            )
 
         if game_mode == GameRoom.GameMode.CLASSIC_101:
             if max_players != 2:
