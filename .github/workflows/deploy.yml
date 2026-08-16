@@ -69,6 +69,16 @@ jobs:
             ufw allow 80/tcp || true
           fi
 
+          # Capture the currently running container logs before a rebuild replaces
+          # it. This makes production-only 500 tracebacks visible in the deploy
+          # run instead of losing them during container recreation.
+          if [ -d /opt/domino_backend/.git ]; then
+            cd /opt/domino_backend
+            echo "=== Recent backend logs before deploy ==="
+            docker compose logs --since=45m --tail=400 web || true
+            echo "=== End recent backend logs ==="
+          fi
+
           if [ ! -d /opt/domino_backend/.git ]; then
             rm -rf /opt/domino_backend
             git clone --branch main --depth 1 \
