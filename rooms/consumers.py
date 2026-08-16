@@ -72,10 +72,12 @@ class RoomLobbyConsumer(AsyncJsonWebsocketConsumer):
         message_type = content.get("type")
 
         if message_type == "ping":
+            # Answer heartbeat immediately. Presence cleanup and turn timeout
+            # processing may touch PostgreSQL/Redis and must not delay pong.
+            await self.send_json({"type": "pong"})
             await self._touch_player()
             stale_players_marked = await self._mark_stale_players_offline()
             await self._process_turn_timeout()
-            await self.send_json({"type": "pong"})
 
             if stale_players_marked:
                 await self._broadcast_presence_change()

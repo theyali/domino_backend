@@ -69,13 +69,6 @@ jobs:
             ufw allow 80/tcp || true
           fi
 
-          if [ -d /opt/domino_backend/.git ]; then
-            cd /opt/domino_backend
-            echo "===== Existing web logs before deploy ====="
-            docker compose logs --since=45m --tail=1200 web || true
-            echo "===== End existing web logs ====="
-          fi
-
           if [ ! -d /opt/domino_backend/.git ]; then
             rm -rf /opt/domino_backend
             git clone --branch main --depth 1 \
@@ -154,6 +147,30 @@ jobs:
             fi
             sleep 2
           done
+
+          echo "Checking idle Channels receive for Redis timeout regression..."
+          docker compose exec -T web python manage.py shell <<'PY'
+          import asyncio
+          from channels.layers import get_channel_layer
+
+          async def check_channel_layer():
+              layer = get_channel_layer()
+              channel = await layer.new_channel("health")
+
+              async def delayed_send():
+                  await asyncio.sleep(8)
+                  await layer.send(channel, {"type": "health.message"})
+
+              sender = asyncio.create_task(delayed_send())
+              try:
+                  message = await asyncio.wait_for(layer.receive(channel), timeout=12)
+                  assert message.get("type") == "health.message", message
+              finally:
+                  await sender
+
+          asyncio.run(check_channel_layer())
+          print("Channels Redis idle receive smoke check passed.")
+          PY
           REMOTE
 
           for attempt in $(seq 1 20); do

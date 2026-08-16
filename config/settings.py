@@ -122,7 +122,16 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [REDIS_URL],
+            # redis-py 8 changed socket_timeout to 5 seconds by default.
+            # Channels performs a blocking BZPOPMIN while waiting for realtime
+            # messages, so an idle room must not time out the Redis read.
+            "hosts": [
+                {
+                    "address": REDIS_URL,
+                    "socket_timeout": None,
+                    "socket_connect_timeout": 5,
+                }
+            ],
         },
     }
 }
