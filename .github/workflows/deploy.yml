@@ -92,6 +92,10 @@ jobs:
           DJANGO_DEBUG=1
           DJANGO_ALLOWED_HOSTS=185.229.225.177,127.0.0.1,localhost
 
+          DJANGO_SUPERUSER_USERNAME=admin
+          DJANGO_SUPERUSER_PASSWORD=admin
+          DJANGO_SUPERUSER_EMAIL=admin@localhost
+
           POSTGRES_DB=domino
           POSTGRES_USER=domino
           POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -109,23 +113,22 @@ jobs:
             chmod 600 .env
           fi
 
-          if grep -q '^WEB_BIND=' .env; then
-            sed -i 's/^WEB_BIND=.*/WEB_BIND=0.0.0.0/' .env
-          else
-            echo 'WEB_BIND=0.0.0.0' >> .env
-          fi
+          set_env_var() {
+            key="$1"
+            value="$2"
+            if grep -q "^${key}=" .env; then
+              sed -i "s|^${key}=.*|${key}=${value}|" .env
+            else
+              echo "${key}=${value}" >> .env
+            fi
+          }
 
-          if grep -q '^WEB_PORT=' .env; then
-            sed -i 's/^WEB_PORT=.*/WEB_PORT=80/' .env
-          else
-            echo 'WEB_PORT=80' >> .env
-          fi
-
-          if grep -q '^DJANGO_ALLOWED_HOSTS=' .env; then
-            sed -i 's/^DJANGO_ALLOWED_HOSTS=.*/DJANGO_ALLOWED_HOSTS=185.229.225.177,127.0.0.1,localhost/' .env
-          else
-            echo 'DJANGO_ALLOWED_HOSTS=185.229.225.177,127.0.0.1,localhost' >> .env
-          fi
+          set_env_var WEB_BIND 0.0.0.0
+          set_env_var WEB_PORT 80
+          set_env_var DJANGO_ALLOWED_HOSTS 185.229.225.177,127.0.0.1,localhost
+          set_env_var DJANGO_SUPERUSER_USERNAME admin
+          set_env_var DJANGO_SUPERUSER_PASSWORD admin
+          set_env_var DJANGO_SUPERUSER_EMAIL admin@localhost
 
           docker compose pull db pgbouncer redis
           docker compose up -d --build --remove-orphans
@@ -134,13 +137,26 @@ jobs:
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error \
               http://127.0.0.1/api/health/ >/dev/null; then
-              echo "Domino backend is healthy: http://185.229.225.177/"
+              echo "Domino backend is healthy locally."
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "Backend local health check failed"
+              docker compose logs --tail=200 web
+              exit 1
+            fi
+            sleep 2
+          done
+          REMOTE
+
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error \
+              http://185.229.225.177/api/health/ >/dev/null; then
+              echo "Domino backend is publicly healthy: http://185.229.225.177/"
               exit 0
             fi
             sleep 2
           done
 
-          echo "Backend health check failed"
-          docker compose logs --tail=200 web
+          echo "Public health check failed"
           exit 1
-          REMOTE

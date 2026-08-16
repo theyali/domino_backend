@@ -5,3 +5,4 @@ channels-redis==4.3.0
 psycopg[binary]==3.3.4
 Pillow==12.3.0
 firebase-admin==7.5.0
+whitenoise==6.12.0
