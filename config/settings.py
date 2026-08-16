@@ -1,13 +1,27 @@
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = "dev-only-domino-secret-key-change-before-production"
-DEBUG = True
 
-# Local-development setting so a physical iPhone can call the Mac by LAN IP.
-# Replace with explicit hosts before production deployment.
-ALLOWED_HOSTS = ["*"]
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_list(name: str, default: str = "") -> list[str]:
+    value = os.getenv(name, default)
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+SECRET_KEY = os.getenv(
+    "DJANGO_SECRET_KEY",
+    "dev-only-domino-secret-key-change-before-production",
+)
+DEBUG = _env_bool("DJANGO_DEBUG", True)
+ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", "*")
 
 INSTALLED_APPS = [
     "daphne",
@@ -59,8 +73,22 @@ ASGI_APPLICATION = "config.asgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("DB_NAME") or os.getenv("POSTGRES_DB", "domino"),
+        "USER": os.getenv("DB_USER") or os.getenv("POSTGRES_USER", "domino"),
+        "PASSWORD": os.getenv("DB_PASSWORD") or os.getenv(
+            "POSTGRES_PASSWORD",
+            "domino_dev_password",
+        ),
+        "HOST": os.getenv("DB_HOST", "127.0.0.1"),
+        "PORT": os.getenv("DB_PORT", "6433"),
+        # PgBouncer owns connection reuse. Django connections stay short-lived.
+        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "0")),
+        # Required for PgBouncer transaction pooling.
+        "DISABLE_SERVER_SIDE_CURSORS": _env_bool(
+            "DB_DISABLE_SERVER_SIDE_CURSORS",
+            True,
+        ),
     }
 }
 
@@ -86,10 +114,13 @@ REST_FRAMEWORK = {
     ],
 }
 
-# No Redis is needed for the first local prototype. We will replace this
-# with channels_redis when moving to multiple processes / a real server.
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6380/0")
+
 CHANNEL_LAYERS = {
     "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer",
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [REDIS_URL],
+        },
     }
 }

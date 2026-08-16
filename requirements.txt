@@ -1,5 +1,7 @@
 Django==5.2.14
 djangorestframework==3.16.1
 channels[daphne]==4.3.2
+channels-redis==4.3.0
+psycopg[binary]==3.3.4
 Pillow==12.3.0
 firebase-admin==7.5.0

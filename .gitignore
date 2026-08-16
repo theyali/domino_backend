@@ -2,19 +2,22 @@
 .venv
 
 *.pyo
-db.sqlite3
-env
-.venv
-.env
-
 *.pyc
-__pycache__
-__pypackages__
+__pycache__/
+__pypackages__/
+*.egg-info/
 
-*.egg-info
+.env
+env/
+
+# Old local SQLite database (backend now uses PostgreSQL).
+db.sqlite3
+*.sqlite3
+
+# PostgreSQL bind-mounted data must stay local and never be committed.
+data/*
+!data/.gitkeep
 
 .DS_Store
-
 *.log
-
 media/
